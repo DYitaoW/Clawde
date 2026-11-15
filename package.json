@@ -1,6 +1,6 @@
 {
   "name": "clawde",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Clawde: macOS menu bar monitor for Claude and Antigravity usage limits",
   "main": "src/main/index.js",
   "scripts": {

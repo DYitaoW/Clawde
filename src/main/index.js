@@ -1,4 +1,4 @@
-const { app, ipcMain, Notification } = require('electron');
+const { app, ipcMain, Notification, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
@@ -27,13 +27,16 @@ const cleanUserAgent = process.platform === 'darwin'
 
 app.userAgentFallback = cleanUserAgent;
 
-const { createTray, updateTrayTitle, getPopoverWindow, showWindow, resizePopover } = require('./tray');
+const { createTray, updateTrayTitle, getPopoverWindow, showWindow, showSettingsWindow, resizePopover } = require('./tray');
 const { openLogin } = require('./loginWindow');
 const claudeProvider = require('./providers/claude');
 const antigravityProvider = require('./providers/antigravity');
 const secureStore = require('./secureStore');
 const { getSystemStats } = require('./systemStats');
 const updateCheck = require('./updateCheck');
+const history = require('./history');
+
+const HISTORY_WINDOW_MS = 24 * 60 * 60 * 1000; // charts on the cards show the last 24h
 
 let currentUsage = [];
 let refreshTimer = null;
@@ -121,6 +124,34 @@ function checkAndNotifyUsage(items) {
   }
 }
 
+// "Session reset" alert: last fresh session % per provider
+const lastSessionPercent = {};
+const RESET_FROM_PERCENT = 20; // only worth an alert if the window was actually in use
+const RESET_TO_PERCENT = 5;
+
+function checkResetNotifications(items) {
+  try {
+    const settings = secureStore.getSettings();
+    for (const item of items) {
+      if (!item || !item.loggedIn || item.stale) continue;
+      const pct = typeof item.windowPercent === 'number' ? item.windowPercent : item.percentUsed;
+      const prev = lastSessionPercent[item.provider];
+      lastSessionPercent[item.provider] = pct;
+      if (settings.resetAlertsEnabled === false) continue;
+      if (!Notification || !Notification.isSupported()) continue;
+      if (typeof prev === 'number' && prev >= RESET_FROM_PERCENT && pct <= RESET_TO_PERCENT) {
+        new Notification({
+          title: `${item.name} session reset`,
+          body: `Your 5-hour ${item.name} limit has reset. Full quota available.`,
+          silent: false
+        }).show();
+      }
+    }
+  } catch (err) {
+    console.warn('[Notifications] Reset alert error:', err.message);
+  }
+}
+
 if (process.platform === 'darwin') {
   app.dock.hide();
 }
@@ -134,9 +165,12 @@ async function collectAllUsage() {
   const prevClaude = currentUsage.find(u => u.provider === 'claude');
   const prevAnti = currentUsage.find(u => u.provider === 'antigravity');
 
+  // A failed fetch keeps the previous numbers, marked as stale
+  const asStale = (prev) => prev && { ...prev, stale: true };
+
   const claudeData = (claudeResult.status === 'fulfilled' && claudeResult.value)
     ? claudeResult.value
-    : (prevClaude || {
+    : (asStale(prevClaude) || {
         provider: 'claude',
         name: 'Claude',
         loggedIn: false,
@@ -149,7 +183,7 @@ async function collectAllUsage() {
 
   const antigravityData = (antigravityResult.status === 'fulfilled' && antigravityResult.value)
     ? antigravityResult.value
-    : (prevAnti || {
+    : (asStale(prevAnti) || {
         provider: 'antigravity',
         name: 'Antigravity',
         loggedIn: false,
@@ -160,17 +194,22 @@ async function collectAllUsage() {
         status: 'disconnected'
       });
 
-  // Calculate real-time burn rate for logged-in providers
-  if (claudeData.loggedIn) {
-    claudeData.burnRate = computeBurnRate('claude', claudeData.windowPercent);
-  }
-  if (antigravityData.loggedIn) {
-    antigravityData.burnRate = computeBurnRate('antigravity', antigravityData.windowPercent);
+  for (const data of [claudeData, antigravityData]) {
+    if (!data.loggedIn) continue;
+    if (!data.stale) {
+      // Pace and history only from fresh readings
+      data.burnRate = computeBurnRate(data.provider, data.windowPercent);
+      history.record(data.provider, data.windowPercent, data.weeklyPercent);
+    } else {
+      data.burnRate = null;
+    }
+    data.history = history.get(data.provider, Date.now() - HISTORY_WINDOW_MS);
   }
 
   currentUsage = [claudeData, antigravityData];
   updateTrayTitle(currentUsage);
-  checkAndNotifyUsage(currentUsage);
+  checkAndNotifyUsage(currentUsage.filter(u => !u.stale));
+  checkResetNotifications(currentUsage);
 
   const popover = getPopoverWindow();
   if (popover && !popover.isDestroyed()) {
@@ -189,7 +228,11 @@ function startPolling() {
 }
 
 app.whenReady().then(async () => {
-  createTray();
+  createTray({
+    onRefresh: () => collectAllUsage().catch(() => {}),
+    onCheckUpdates: () => { showSettingsWindow(); updateCheck.checkForUpdates(); },
+    onQuit: () => app.quit()
+  });
 
   updateCheck.startUpdateChecks((status) => {
     const popover = getPopoverWindow();
@@ -263,6 +306,10 @@ ipcMain.handle('log-out', async (_event, provider) => {
   } else if (provider === 'antigravity') {
     await antigravityProvider.logout();
   }
+  if (provider === 'claude' || provider === 'antigravity') {
+    history.clear(provider);
+    delete lastSessionPercent[provider];
+  }
   return await collectAllUsage();
 });
 
@@ -287,7 +334,7 @@ ipcMain.handle('update-settings', (_event, updates) => {
     }
   }
   const result = secureStore.updateSettings(updates);
-  if (updates && typeof updates.trayWeeklyRing === 'boolean') {
+  if (updates && ['trayWeeklyRing', 'trayShowClaude', 'trayShowAntigravity'].some(k => typeof updates[k] === 'boolean')) {
     updateTrayTitle(currentUsage); // redraw the menu bar icon right away
   }
   return result;
@@ -299,6 +346,16 @@ ipcMain.handle('get-update-status', () => updateCheck.getUpdateStatus());
 ipcMain.handle('check-for-updates', () => updateCheck.checkForUpdates());
 ipcMain.handle('open-release-page', () => updateCheck.openReleasePage());
 ipcMain.handle('install-update', () => updateCheck.installUpdate());
+
+// Card click: open where each service shows its usage
+const USAGE_PAGES = {
+  claude: 'https://claude.ai/settings/usage',
+  antigravity: 'https://antigravity.google/'
+};
+ipcMain.handle('open-usage-page', (_event, provider) => {
+  const url = USAGE_PAGES[provider];
+  if (url) shell.openExternal(url);
+});
 
 ipcMain.handle('quit-app', () => {
   app.quit();
@@ -321,6 +378,8 @@ ipcMain.handle('resize-popover', (_event, height, width) => {
 });
 
 app.on('second-instance', () => showWindow());
+
+app.on('before-quit', () => history.flush());
 
 app.on('window-all-closed', (e) => {
   e.preventDefault();

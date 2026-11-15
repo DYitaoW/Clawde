@@ -74,6 +74,7 @@ class ClaudeProvider {
         this.orgId = result.orgId;
         return result.usage;
       }
+      if (result && /^orgs_40[13]$/.test(result.error || '')) this.lastAuthError = true;
     } catch (e) {
       console.warn('[ClaudeProvider] Fallback page fetch failed:', e.message);
     } finally {
@@ -92,12 +93,16 @@ class ClaudeProvider {
     };
     const getJson = async (url) => {
       const res = await ses.fetch(url, { headers });
-      if (!res.ok) return { status: res.status, json: null };
       const type = res.headers.get('content-type') || '';
+      if (res.status === 401 || (res.status === 403 && type.includes('application/json'))) {
+        this.lastAuthError = true; // signed out on claude.ai's side
+      }
+      if (!res.ok) return { status: res.status, json: null };
       if (!type.includes('application/json')) return { status: res.status, json: null }; // challenge/HTML page
       return { status: res.status, json: await res.json() };
     };
 
+    this.lastAuthError = false;
     try {
       if (!this.orgId) {
         const saved = secureStore.getSession('claude');
@@ -220,10 +225,16 @@ class ClaudeProvider {
       // 3. Last known usage (offline / both failed)
       let usageData = await this.fetchDirect();
       if (!usageData) usageData = await this.fetchViaTemporaryPage();
+      let stale = false;
+      let updatedAt = Date.now();
+      const needsReauth = !usageData && Boolean(this.lastAuthError);
       if (!usageData) {
+        stale = true;
+        updatedAt = null;
         const savedSession = secureStore.getSession('claude');
         if (savedSession && savedSession.lastUsage) {
           usageData = savedSession.lastUsage;
+          updatedAt = savedSession.lastUsageAt ? Date.parse(savedSession.lastUsageAt) : null;
         }
       }
 
@@ -317,19 +328,22 @@ class ClaudeProvider {
           detail = `5-Hour Window (${fiveHourPercent}% used)`;
         }
 
-        try {
-          const currentSession = secureStore.getSession('claude') || {};
-          secureStore.saveSession('claude', {
-            ...currentSession,
-            orgId: this.orgId || currentSession.orgId || null,
-            lastUsage: usageData
-          });
-        } catch (e) {}
+        if (!stale) {
+          try {
+            const currentSession = secureStore.getSession('claude') || {};
+            secureStore.saveSession('claude', {
+              ...currentSession,
+              orgId: this.orgId || currentSession.orgId || null,
+              lastUsage: usageData,
+              lastUsageAt: new Date(updatedAt).toISOString()
+            });
+          } catch (e) {}
+        }
       }
 
       const status = percentUsed >= 90 ? 'critical' : percentUsed >= 70 ? 'warning' : 'ok';
 
-      return {
+      const result = {
         provider: 'claude',
         name: 'Claude',
         loggedIn: true,
@@ -340,12 +354,23 @@ class ClaudeProvider {
         weeklyResetInText,
         resetInText,
         status,
-        detail
+        detail,
+        hasData: Boolean(usageData),
+        stale,          // couldn't reach claude.ai: these are the last known numbers
+        updatedAt,      // when these numbers were fetched (ms), null if never
+        needsReauth     // claude.ai rejected the saved sign-in
       };
+      if (!stale) this.lastResult = result;
+      return result;
 
     } catch (err) {
       console.error('[ClaudeProvider] Usage fetch error:', err.message);
+      if (this.lastResult) return { ...this.lastResult, stale: true, needsReauth: false };
       return {
+        hasData: false,
+        stale: true,
+        updatedAt: null,
+        needsReauth: false,
         provider: 'claude',
         name: 'Claude',
         loggedIn: true,
@@ -364,6 +389,7 @@ class ClaudeProvider {
   async logout() {
     this.orgId = null;
     this.cachedUsage = null;
+    this.lastResult = null;
     try {
       const ses = this.getSession();
       await ses.clearStorageData();

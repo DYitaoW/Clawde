@@ -148,6 +148,10 @@ class SecureStore {
       trayWeeklyRing: true,
       pacingEnabled: true,
       theme: 'system',
+      resetAlertsEnabled: true,
+      historyEnabled: true,
+      trayShowClaude: true,
+      trayShowAntigravity: true,
       ...this.data.settings
     };
   }

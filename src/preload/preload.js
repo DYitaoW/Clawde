@@ -15,6 +15,12 @@ contextBridge.exposeInMainWorld('api', {
   checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
   openReleasePage: () => ipcRenderer.invoke('open-release-page'),
   installUpdate: () => ipcRenderer.invoke('install-update'),
+  openUsagePage: (provider) => ipcRenderer.invoke('open-usage-page', provider),
+  onOpenSettings: (callback) => {
+    const handler = () => callback();
+    ipcRenderer.on('open-settings', handler);
+    return () => ipcRenderer.removeListener('open-settings', handler);
+  },
   onUpdateStatus: (callback) => {
     const handler = (_event, status) => callback(status);
     ipcRenderer.on('update-status', handler);

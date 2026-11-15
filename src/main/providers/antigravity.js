@@ -951,6 +951,9 @@ class AntigravityProvider {
         }
       }
 
+      // Google rejected the saved sign-in and it couldn't be refreshed
+      let authFailed = false;
+
       // 2. OpenUsage Remote API: Try cloudcode-pa with access token
       if (accessToken) {
         let remoteResult = await this.fetchRemoteQuota(accessToken);
@@ -963,6 +966,7 @@ class AntigravityProvider {
             remoteResult = await this.fetchRemoteQuota(freshToken);
           }
         }
+        authFailed = Boolean(remoteResult && remoteResult.error === 'unauthorized' && savedSession.tokens);
 
         if (remoteResult && !remoteResult.error) {
           secureStore.setProviderLoggedIn('antigravity', true);
@@ -979,6 +983,7 @@ class AntigravityProvider {
           secureStore.saveSession('antigravity', {
             ...(secureStore.getSession('antigravity') || {}),
             lastUsage: this.cachedUsage,
+            lastUsageAt: new Date().toISOString(),
             connectedAt: new Date().toISOString()
           });
 
@@ -994,7 +999,8 @@ class AntigravityProvider {
             weeklyResetInText: remoteResult.weeklyResetInText,
             resetInText: remoteResult.resetInText,
             status,
-            detail: this.cachedUsage.detail
+            detail: this.cachedUsage.detail,
+            hasData: true, stale: false, updatedAt: Date.now(), needsReauth: false
           };
         }
       }
@@ -1018,6 +1024,7 @@ class AntigravityProvider {
           secureStore.saveSession('antigravity', {
             ...(secureStore.getSession('antigravity') || {}),
             lastUsage: this.cachedUsage,
+            lastUsageAt: new Date().toISOString(),
             connectedAt: new Date().toISOString()
           });
 
@@ -1033,7 +1040,8 @@ class AntigravityProvider {
             weeklyResetInText: liveQuota.weeklyResetInText,
             resetInText: liveQuota.resetInText,
             status,
-            detail
+            detail,
+            hasData: true, stale: false, updatedAt: Date.now(), needsReauth: false
           };
         }
       } catch (err) {
@@ -1054,7 +1062,27 @@ class AntigravityProvider {
           weeklyResetInText: u.weeklyResetInText,
           resetInText: u.resetInText || 'Active',
           status: (u.percentUsed >= 90) ? 'critical' : (u.percentUsed >= 70) ? 'warning' : 'ok',
-          detail: u.detail || 'Antigravity Connected'
+          detail: u.detail || 'Antigravity Connected',
+          hasData: true,
+          stale: true, // last known numbers; Antigravity couldn't be reached
+          updatedAt: savedSession.lastUsageAt ? Date.parse(savedSession.lastUsageAt) : null,
+          needsReauth: authFailed
+        };
+      }
+
+      // Signed in before, but the sign-in expired and there's nothing cached
+      if (authFailed) {
+        return {
+          provider: 'antigravity',
+          name: 'Antigravity',
+          loggedIn: true,
+          percentUsed: 0,
+          windowPercent: 0,
+          weeklyPercent: 0,
+          resetInText: 'Sign-in expired',
+          status: 'ok',
+          detail: 'Sign in again to keep tracking Antigravity',
+          hasData: false, stale: true, updatedAt: null, needsReauth: true
         };
       }
 

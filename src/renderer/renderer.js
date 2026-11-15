@@ -14,6 +14,7 @@ let lastFetchTime = null;
 let lastUsage = [];
 const popoverContainer = document.querySelector('.popover-container');
 let pacingEnabled = true; // show the pace (%/h) badge on each card
+let historyEnabled = true; // show the 24-hour chart on each card
 
 // Popover gauge: outer ring = 5-hour window, inner ring = weekly quota
 const OUTER_RADIUS = 25;
@@ -46,12 +47,180 @@ function formatResetTime(resetStr) {
   return resetStr;
 }
 
+const PROVIDER_NAMES = { claude: 'Claude', antigravity: 'Antigravity' };
+
+// "just now", "12m ago", "3h ago", "2d ago"
+function relativeTime(ms) {
+  const diff = Math.max(0, Date.now() - ms);
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
+}
+
+function staleLabel(updatedAt) {
+  return updatedAt ? `Updated ${relativeTime(updatedAt)}` : 'Offline';
+}
+
+// Keep "Updated 12m ago" labels current without re-rendering the cards
+function refreshRelativeTimes() {
+  for (const el of document.querySelectorAll('[data-updated-at]')) {
+    const t = Number(el.dataset.updatedAt);
+    el.lastChild.textContent = staleLabel(t || null);
+  }
+}
+
+const reauthBarHtml = (provider) => `
+  <div class="reauth-bar">
+    <span class="reauth-text">Sign-in expired</span>
+    <button class="reauth-btn" onclick="handleLogin('${provider}')">Sign in again</button>
+  </div>`;
+
+// ---------- 24-hour usage history chart ----------
+const HISTORY_MS = 24 * 60 * 60 * 1000;
+const HISTORY_GAP_MS = 20 * 60 * 1000; // longer gaps (asleep / app closed) break the line
+const CHART_W = 260;
+const CHART_H = 30;
+const chartSamples = {}; // provider -> samples shown, for the hover readout
+
+function formatClock(t) {
+  return new Date(t).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+}
+
+function renderHistoryChart(provider, samples) {
+  const now = Date.now();
+  const start = now - HISTORY_MS;
+  const pts = (samples || []).filter(e => e.t >= start).sort((a, b) => a.t - b.t);
+  chartSamples[provider] = pts;
+
+  if (pts.length < 2) {
+    return `
+      <div class="history">
+        <div class="history-head">
+          <span class="history-title">Session · last 24h</span>
+          <span class="history-readout">Collecting data…</span>
+        </div>
+      </div>`;
+  }
+
+  const x = (t) => (((t - start) / HISTORY_MS) * CHART_W).toFixed(1);
+  const y = (v) => (CHART_H - 1 - (v / 100) * (CHART_H - 2)).toFixed(1);
+
+  // Split into runs where readings are close together
+  const runs = [];
+  let run = [];
+  for (const p of pts) {
+    if (run.length && p.t - run[run.length - 1].t > HISTORY_GAP_MS) { runs.push(run); run = []; }
+    run.push(p);
+  }
+  if (run.length) runs.push(run);
+
+  let line = '';
+  let area = '';
+  for (const r of runs) {
+    if (r.length === 1) {
+      // Lone reading: a short flat tick so it's still visible
+      const x0 = Math.max(0, Number(x(r[0].t)) - 1.5), x1 = Number(x(r[0].t)) + 1.5;
+      line += `M${x0},${y(r[0].s)}L${x1},${y(r[0].s)}`;
+      continue;
+    }
+    const pathPts = r.map(p => `${x(p.t)},${y(p.s)}`).join('L');
+    line += `M${pathPts}`;
+    area += `M${x(r[0].t)},${CHART_H}L${pathPts}L${x(r[r.length - 1].t)},${CHART_H}Z`;
+  }
+
+  const peak = Math.max(...pts.map(p => p.s));
+  const latest = pts[pts.length - 1].s;
+  const peakText = `Peak ${peak}%`;
+
+  return `
+    <div class="history">
+      <div class="history-head">
+        <span class="history-title">Session · last 24h</span>
+        <span class="history-readout" data-default="${peakText}">${peakText}</span>
+      </div>
+      <div class="history-plot ${provider}" data-provider="${provider}">
+        <svg viewBox="0 0 ${CHART_W} ${CHART_H}" preserveAspectRatio="none" role="img"
+          aria-label="${PROVIDER_NAMES[provider]} session usage over the last 24 hours: peak ${peak}%, latest ${latest}%">
+          <line class="history-baseline" x1="0" y1="${CHART_H - 0.5}" x2="${CHART_W}" y2="${CHART_H - 0.5}" vector-effect="non-scaling-stroke"></line>
+          <path class="history-area" d="${area}"></path>
+          <path class="history-line" d="${line}" vector-effect="non-scaling-stroke"></path>
+        </svg>
+        <span class="history-crosshair" hidden></span>
+        <span class="history-dot" hidden></span>
+      </div>
+      <div class="history-axis"><span>24h ago</span><span>now</span></div>
+    </div>`;
+}
+
+// Hover: crosshair + dot on the nearest reading, value shown in the header
+function attachHistoryHover(contentEl) {
+  const plot = contentEl.querySelector('.history-plot');
+  if (!plot) return;
+  const readout = contentEl.querySelector('.history-readout');
+  const crosshair = plot.querySelector('.history-crosshair');
+  const dot = plot.querySelector('.history-dot');
+  const pts = chartSamples[plot.dataset.provider] || [];
+
+  plot.addEventListener('mousemove', (e) => {
+    if (!pts.length) return;
+    const rect = plot.getBoundingClientRect();
+    const start = Date.now() - HISTORY_MS;
+    const t = start + ((e.clientX - rect.left) / rect.width) * HISTORY_MS;
+    let nearest = pts[0];
+    for (const p of pts) if (Math.abs(p.t - t) < Math.abs(nearest.t - t)) nearest = p;
+    const px = ((nearest.t - start) / HISTORY_MS) * rect.width;
+    const py = (1 - 1 / CHART_H - (nearest.s / 100) * ((CHART_H - 2) / CHART_H)) * rect.height;
+    crosshair.style.left = `${px}px`;
+    dot.style.left = `${px}px`;
+    dot.style.top = `${py}px`;
+    crosshair.hidden = false;
+    dot.hidden = false;
+    readout.textContent = `${formatClock(nearest.t)} · ${nearest.s}%`;
+    readout.classList.add('active');
+  });
+  plot.addEventListener('mouseleave', () => {
+    crosshair.hidden = true;
+    dot.hidden = true;
+    readout.textContent = readout.dataset.default || '';
+    readout.classList.remove('active');
+  });
+}
+
 function renderProviderCard(provider, data) {
   const isClaude = provider === 'claude';
   const contentEl = isClaude ? claudeContent : antigravityContent;
   const badgeEl = isClaude ? claudeBadge : antigravityBadge;
+  const cardEl = document.getElementById(`card-${provider}`);
 
   if (!contentEl || !badgeEl) return;
+
+  const connected = Boolean(data && data.loggedIn);
+  const hasData = connected && data.hasData !== false;
+  if (cardEl) {
+    cardEl.classList.toggle('stale', hasData && Boolean(data.stale));
+    // Click a connected card to open that service's usage page
+    cardEl.classList.toggle('clickable', hasData);
+    cardEl.title = hasData ? `Open ${PROVIDER_NAMES[provider]} usage` : '';
+  }
+
+  // Connected, but no numbers yet (or sign-in expired before any were saved)
+  if (connected && !hasData) {
+    badgeEl.innerHTML = data.needsReauth
+      ? `<span class="badge-tag disconnected">Expired</span>`
+      : `<span class="badge-tag connecting">Offline</span>`;
+    contentEl.innerHTML = data.needsReauth
+      ? `<div class="unauth-state">
+           <span class="unauth-note">Your ${PROVIDER_NAMES[provider]} sign-in has expired.</span>
+           <button class="login-btn ${isClaude ? 'login-btn-claude' : 'login-btn-antigravity'}" onclick="handleLogin('${provider}')">
+             <span>Sign in again</span>
+           </button>
+         </div>`
+      : `<div class="unauth-state"><span class="unauth-note">Waiting for usage data…</span></div>`;
+    return;
+  }
 
   if (!data || !data.loggedIn) {
     badgeEl.innerHTML = `<span class="badge-tag disconnected">Disconnected</span>`;
@@ -91,8 +260,14 @@ function renderProviderCard(provider, data) {
     </span>
   ` : '';
 
-  // Top-right of the card shows only the pacing (burn rate); disconnecting lives in Settings
-  badgeEl.innerHTML = `<div class="card-header-right">${burnBadgeHtml}</div>`;
+  // Top-right: pacing normally; "Updated 12m ago" when showing last known numbers
+  const staleBadgeHtml = data.stale ? `
+    <span class="stale-badge" data-updated-at="${data.updatedAt || ''}"
+      title="Couldn't reach ${PROVIDER_NAMES[provider]}. Showing the last known numbers.">
+      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>
+      </svg>${staleLabel(data.updatedAt)}</span>` : '';
+  badgeEl.innerHTML = `<div class="card-header-right">${data.stale ? staleBadgeHtml : burnBadgeHtml}</div>`;
 
   const percent = typeof data.percentUsed === 'number' ? data.percentUsed : 0;
   const windowPercent = typeof data.windowPercent === 'number' ? data.windowPercent : percent;
@@ -130,7 +305,20 @@ function renderProviderCard(provider, data) {
         <span class="metric-compact-time">${weeklyResetDisplay}</span>
       </div>
     </div>
+    ${data.needsReauth ? reauthBarHtml(provider) : ''}
+    ${historyEnabled ? renderHistoryChart(provider, data.history) : ''}
   `;
+  attachHistoryHover(contentEl);
+}
+
+for (const provider of ['claude', 'antigravity']) {
+  const cardEl = document.getElementById(`card-${provider}`);
+  if (!cardEl) continue;
+  cardEl.addEventListener('click', (e) => {
+    if (!cardEl.classList.contains('clickable')) return;
+    if (e.target.closest('button, input, a, .history-plot')) return;
+    window.api.openUsagePage(provider);
+  });
 }
 
 function renderCards(usageList) {
@@ -303,6 +491,13 @@ async function renderSettings() {
       if (pacingToggle) pacingToggle.checked = settings.pacingEnabled !== false;
       const refreshToggle = document.getElementById('settings-refresh-toggle');
       if (refreshToggle) refreshToggle.checked = settings.refreshButtonEnabled !== false;
+      const resetToggle = document.getElementById('settings-reset-toggle');
+      if (resetToggle) resetToggle.checked = settings.resetAlertsEnabled !== false;
+      const historyToggle = document.getElementById('settings-history-toggle');
+      if (historyToggle) historyToggle.checked = settings.historyEnabled !== false;
+      for (const chip of document.querySelectorAll('#settings-tray-services .chip-toggle')) {
+        chip.setAttribute('aria-pressed', String(settings[chip.dataset.setting] !== false));
+      }
       if (notifyToggle) {
         notifyToggle.checked = settings.notificationsEnabled !== false;
         if (thresholdRow) {
@@ -541,11 +736,46 @@ if (pacingToggle) {
   });
 }
 
+// Session reset alerts
+const resetToggle = document.getElementById('settings-reset-toggle');
+if (resetToggle) {
+  resetToggle.addEventListener('change', (e) => {
+    window.api.updateSettings({ resetAlertsEnabled: e.target.checked });
+  });
+}
+
+// 24-hour history chart on the cards
+function applyHistoryEnabled(enabled) {
+  historyEnabled = enabled;
+  renderCards(lastUsage);
+}
+
+const historyToggle = document.getElementById('settings-history-toggle');
+if (historyToggle) {
+  historyToggle.addEventListener('change', (e) => {
+    applyHistoryEnabled(e.target.checked);
+    window.api.updateSettings({ historyEnabled: e.target.checked });
+  });
+}
+
+// Which services appear in the menu bar
+document.getElementById('settings-tray-services').addEventListener('click', (e) => {
+  const chip = e.target.closest('.chip-toggle');
+  if (!chip) return;
+  const on = chip.getAttribute('aria-pressed') !== 'true';
+  chip.setAttribute('aria-pressed', String(on));
+  window.api.updateSettings({ [chip.dataset.setting]: on });
+});
+
+// Tray menu → "Settings…"
+window.api.onOpenSettings(() => showSettings(true));
+
 window.api.getSettings()
   .then(s => {
     applySystemStatsEnabled(!s || s.systemStatsEnabled !== false);
     applyRefreshButtonEnabled(!s || s.refreshButtonEnabled !== false);
     applyPacingEnabled(!s || s.pacingEnabled !== false);
+    applyHistoryEnabled(!s || s.historyEnabled !== false);
     applyTheme(s && s.theme);
   })
   .catch(() => {
@@ -615,6 +845,7 @@ new ResizeObserver(reportPopoverSize).observe(popoverContainer);
 
 // Live countdown ticker
 setInterval(updateNextRefreshText, 1000);
+setInterval(refreshRelativeTimes, 30 * 1000);
 
 // IPC Listener
 window.api.onUsageUpdated((data) => {

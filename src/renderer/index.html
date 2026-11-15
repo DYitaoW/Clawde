@@ -11,8 +11,7 @@
     <header class="app-header">
       <div class="header-left">
         <img class="app-logo logo-light" src="../../assets/clawde-logo-light.svg" alt="">
-        <!-- Dark-mode logo: placeholder uses the light logo recolored until a dark version is added -->
-        <img class="app-logo logo-dark placeholder" src="../../assets/clawde-logo-light.svg" alt="">
+        <img class="app-logo logo-dark" src="../../assets/clawde-logo-dark.svg" alt="">
         <span class="app-title">Clawde</span>
       </div>
       <div class="header-actions">
@@ -98,6 +97,41 @@
           </div>
         </div>
 
+        <div class="settings-section-label">Notifications</div>
+        <div class="settings-group">
+          <div class="settings-row">
+            <div class="settings-row-text">
+              <span class="settings-row-name">Desktop Notifications</span>
+              <span class="settings-row-status">Alert when usage reaches threshold</span>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="settings-notify-toggle" checked>
+              <span class="slider"></span>
+            </label>
+          </div>
+
+          <div class="settings-row" id="settings-threshold-row">
+            <div class="settings-row-text">
+              <span class="settings-row-name">Alert Threshold</span>
+              <span class="settings-row-status">Notify at this usage level</span>
+            </div>
+            <div class="settings-threshold-control">
+              <input type="number" id="settings-threshold-input" min="50" max="99" step="5" value="80" class="threshold-input">
+              <span class="threshold-unit">%</span>
+            </div>
+          </div>
+          <div class="settings-row">
+            <div class="settings-row-text">
+              <span class="settings-row-name">Reset Alerts</span>
+              <span class="settings-row-status">Notify when a 5-hour session resets</span>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="settings-reset-toggle" checked>
+              <span class="slider"></span>
+            </label>
+          </div>
+        </div>
+
         <div class="settings-section-label">About</div>
         <div class="settings-group">
           <div class="settings-row">
@@ -136,6 +170,17 @@
 
           <div class="settings-row">
             <div class="settings-row-text">
+              <span class="settings-row-name">Menu Bar</span>
+              <span class="settings-row-status">Shown in the top bar</span>
+            </div>
+            <div class="chip-toggles" id="settings-tray-services">
+              <button class="chip-toggle" data-setting="trayShowClaude" aria-pressed="true">Claude</button>
+              <button class="chip-toggle" data-setting="trayShowAntigravity" aria-pressed="true">Antigravity</button>
+            </div>
+          </div>
+
+          <div class="settings-row">
+            <div class="settings-row-text">
               <span class="settings-row-name">System Stats</span>
               <span class="settings-row-status">Show CPU and memory usage in the header</span>
             </div>
@@ -169,6 +214,17 @@
 
           <div class="settings-row">
             <div class="settings-row-text">
+              <span class="settings-row-name">Usage History</span>
+              <span class="settings-row-status">Show a 24-hour chart on each card</span>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="settings-history-toggle" checked>
+              <span class="slider"></span>
+            </label>
+          </div>
+
+          <div class="settings-row">
+            <div class="settings-row-text">
               <span class="settings-row-name">Refresh Button</span>
               <span class="settings-row-status">Show refresh next to the update timer</span>
             </div>
@@ -189,27 +245,6 @@
             </label>
           </div>
 
-          <div class="settings-row">
-            <div class="settings-row-text">
-              <span class="settings-row-name">Desktop Notifications</span>
-              <span class="settings-row-status">Alert when usage reaches threshold</span>
-            </div>
-            <label class="switch">
-              <input type="checkbox" id="settings-notify-toggle" checked>
-              <span class="slider"></span>
-            </label>
-          </div>
-
-          <div class="settings-row" id="settings-threshold-row">
-            <div class="settings-row-text">
-              <span class="settings-row-name">Alert Threshold</span>
-              <span class="settings-row-status">Notify at this usage level</span>
-            </div>
-            <div class="settings-threshold-control">
-              <input type="number" id="settings-threshold-input" min="50" max="99" step="5" value="80" class="threshold-input">
-              <span class="threshold-unit">%</span>
-            </div>
-          </div>
         </div>
         </div>
       </div>

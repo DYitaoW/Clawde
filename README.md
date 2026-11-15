@@ -18,12 +18,29 @@
 
 ## Features
 
-- **Menu bar at a glance**: session (5-hour) usage percentage and ring for each service, with an optional inner ring for weekly usage.
-- **Popover details**: session and weekly usage, time until each limit resets, and a pace indicator (% per hour).
-- **Alerts**: optional desktop notification when usage passes a threshold you choose.
-- **System stats**: optional CPU and memory usage in the popover header.
-- **Automatic updates**: new versions download in the background and install on restart.
+**In the menu bar**
+- Session (5-hour) usage percentage and ring for each service, with an optional inner ring for weekly usage.
+- Choose which services appear: Claude, Antigravity or both.
+- Right-click the icon for quick actions: Refresh, Settings, Check for Updates, Quit.
 - Works in light and dark menu bars.
+
+**In the popover**
+- Session and weekly usage for each service, with the time until each limit resets.
+- **Usage history**: a 24-hour chart of your session usage on each card. Hover to see the value at any point.
+- **Pace**: how fast you're using your limit (% per hour).
+- Click a card to open that service's usage page in your browser.
+- Shows when numbers are out of date ("Updated 12m ago") if a service can't be reached, and a **Sign in again** button if a sign-in expires.
+- Optional CPU and memory usage in the header.
+- Light, dark or automatic appearance.
+
+**Notifications**
+- Alert when usage passes a threshold you choose.
+- Alert when your 5-hour session resets and full quota is available again.
+
+**Updates**
+- New versions download in the background and install on restart.
+
+Every extra (history, pace, system stats, menu bar rings, alerts) can be turned off in **Settings**.
 
 ## Requirements
 
@@ -44,6 +61,7 @@ Clawde updates itself. It checks GitHub twice a day and downloads new versions i
 
 - Everything stays on your Mac. Clawde talks only to claude.ai, Google (for Antigravity sign-in and quota), the local Antigravity app if it's running, and GitHub (for the update check).
 - Saved sign-in sessions are encrypted with the macOS Keychain.
+- Usage history is saved only on your Mac (percentages and times only), kept for 7 days, and deleted when you disconnect a service.
 - No analytics or tracking.
 
 ## Disclaimer

@@ -905,11 +905,6 @@ input:checked + .slider:before {
   display: none;
 }
 
-/* Placeholder until a dedicated dark-mode logo is added: render the light logo near-white */
-.app-logo.logo-dark.placeholder {
-  filter: brightness(0) invert(0.93);
-}
-
 /* Appearance segmented control */
 .segmented {
   display: inline-flex;
@@ -961,4 +956,193 @@ input:checked + .slider:before {
   flex-direction: column;
   gap: 8px;
   min-width: 0;
+}
+
+/* Clickable cards open the service's usage page */
+.provider-card.clickable {
+  cursor: pointer;
+}
+
+/* Last known numbers (service unreachable): dimmed, with "Updated 12m ago" */
+.provider-card.stale .card-metric-row,
+.provider-card.stale .history {
+  opacity: 0.5;
+  transition: opacity 0.2s ease;
+}
+
+.stale-badge {
+  font-size: 9.5px;
+  font-weight: 600;
+  padding: 1.5px 5.5px;
+  border-radius: 4px;
+  background: rgba(var(--ink-rgb), 0.06);
+  color: var(--text-tertiary);
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  white-space: nowrap;
+}
+
+/* Sign-in expired */
+.reauth-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 5px 6px 5px 9px;
+  border-radius: 7px;
+  background: rgba(248, 113, 113, 0.1);
+}
+
+.reauth-text {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--danger-color);
+}
+
+.reauth-btn {
+  background: var(--danger-color);
+  color: #fff;
+  border: none;
+  border-radius: 5px;
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+
+.reauth-btn:hover {
+  filter: brightness(1.08);
+}
+
+.unauth-note {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+/* 24-hour usage history */
+.history {
+  margin-top: 9px;
+}
+
+.history-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 3px;
+}
+
+.history-title {
+  font-size: 9.5px;
+  font-weight: 600;
+  color: var(--text-tertiary);
+  letter-spacing: 0.1px;
+}
+
+.history-readout {
+  font-size: 9.5px;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.history-readout.active {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.history-plot {
+  position: relative;
+  height: 30px;
+  cursor: crosshair;
+}
+
+.history-plot svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.history-baseline {
+  stroke: rgba(var(--ink-rgb), 0.12);
+  stroke-width: 1;
+}
+
+.history-line {
+  fill: none;
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.history-area {
+  opacity: 0.16;
+}
+
+.history-plot.claude .history-line { stroke: var(--claude-accent); }
+.history-plot.claude .history-area { fill: var(--claude-accent); }
+.history-plot.antigravity .history-line { stroke: var(--antigravity-accent); }
+.history-plot.antigravity .history-area { fill: var(--antigravity-accent); }
+
+.history-crosshair {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  margin-left: -0.5px;
+  background: rgba(var(--ink-rgb), 0.3);
+  pointer-events: none;
+}
+
+.history-dot {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  margin: -4px 0 0 -4px;
+  border-radius: 50%;
+  border: 2px solid var(--bg-color);
+  pointer-events: none;
+}
+
+.history-plot.claude .history-dot { background: var(--claude-accent); }
+.history-plot.antigravity .history-dot { background: var(--antigravity-accent); }
+
+.history-axis {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 2px;
+  font-size: 8.5px;
+  color: var(--text-tertiary);
+}
+
+/* Settings: on/off chips (menu bar services) */
+.chip-toggles {
+  display: inline-flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.chip-toggle {
+  background: none;
+  border: 1px solid rgba(var(--ink-rgb), 0.14);
+  color: var(--text-tertiary);
+  font-family: inherit;
+  font-size: 10.5px;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.chip-toggle:hover {
+  color: var(--text-primary);
+}
+
+.chip-toggle[aria-pressed="true"] {
+  background: rgba(var(--ink-rgb), 0.1);
+  border-color: rgba(var(--ink-rgb), 0.2);
+  color: var(--text-primary);
 }

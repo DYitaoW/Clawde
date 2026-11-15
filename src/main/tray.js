@@ -1,9 +1,15 @@
-const { Tray, BrowserWindow, screen, nativeImage, nativeTheme } = require('electron');
+const { Tray, Menu, BrowserWindow, screen, nativeImage, nativeTheme } = require('electron');
 const path = require('path');
 const secureStore = require('./secureStore');
 
 let tray = null;
 let popoverWindow = null;
+let defaultIcon = null;  // plain app icon, used when nothing is chosen for the menu bar
+let menuHandlers = {};
+// Clicking the menu bar icon while the popover is open first blurs (hides) it;
+// remember when, so the same click doesn't immediately reopen it.
+let lastBlurHideAt = 0;
+const BLUR_CLICK_GRACE_MS = 300;
 
 // Hidden window that draws the menu bar icon on a canvas, so the percentages
 // use the real macOS system font (SF Pro) at menu bar size.
@@ -37,6 +43,11 @@ async function renderTrayIcon(providers) {
     while (pendingIconData) {
       const data = pendingIconData;
       pendingIconData = null;
+      if (data.length === 0) {
+        // Both services hidden from the menu bar: show the plain app icon
+        if (tray && !tray.isDestroyed() && defaultIcon) tray.setImage(defaultIcon);
+        continue;
+      }
       const win = await getIconRenderer();
       const options = { dark: nativeTheme.shouldUseDarkColors };
       const dataUrl = await win.webContents.executeJavaScript(
@@ -55,7 +66,8 @@ async function renderTrayIcon(providers) {
   }
 }
 
-function createTray() {
+function createTray(handlers = {}) {
+  menuHandlers = handlers;
   const isMac = process.platform === 'darwin';
   const iconName = isMac ? 'iconTemplate.png' : 'icon.png';
   const iconPath = path.join(__dirname, '../../assets', iconName);
@@ -65,6 +77,7 @@ function createTray() {
     icon.setTemplateImage(true);
   }
 
+  defaultIcon = icon;
   tray = new Tray(icon);
 
   // Redraw with matching ink when the menu bar switches between light and dark
@@ -77,11 +90,26 @@ function createTray() {
     toggleWindow();
   });
 
+  // Right-click: quick actions menu
   tray.on('right-click', () => {
-    toggleWindow();
+    if (popoverWindow && popoverWindow.isVisible()) popoverWindow.hide();
+    tray.popUpContextMenu(buildTrayMenu());
   });
 
   return tray;
+}
+
+function buildTrayMenu() {
+  const call = (name) => () => { if (typeof menuHandlers[name] === 'function') menuHandlers[name](); };
+  return Menu.buildFromTemplate([
+    { label: 'Open Clawde', click: () => showWindow() },
+    { label: 'Refresh Now', click: call('onRefresh') },
+    { type: 'separator' },
+    { label: 'Settings…', click: () => showSettingsWindow() },
+    { label: 'Check for Updates…', click: call('onCheckUpdates') },
+    { type: 'separator' },
+    { label: 'Quit Clawde', click: call('onQuit') }
+  ]);
 }
 
 function createPopoverWindow() {
@@ -101,11 +129,25 @@ function createPopoverWindow() {
     }
   });
 
+  if (process.platform === 'darwin') {
+    // macOS ties a window to the Space (desktop) it was first shown on, and
+    // showing it later switches back to that Space. Belong to every Space
+    // instead, so the popover opens on the current desktop (and over
+    // full-screen apps). skipTransformProcessType keeps the Dock icon hidden.
+    popoverWindow.setVisibleOnAllWorkspaces(true, {
+      visibleOnFullScreen: true,
+      skipTransformProcessType: true
+    });
+    // Menu-level window so it also shows above full-screen apps
+    popoverWindow.setAlwaysOnTop(true, 'pop-up-menu');
+  }
+
   popoverWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
 
   popoverWindow.on('blur', () => {
     if (!popoverWindow.webContents.isDevToolsOpened()) {
       popoverWindow.hide();
+      lastBlurHideAt = Date.now();
     }
   });
 }
@@ -115,7 +157,7 @@ function toggleWindow() {
 
   if (popoverWindow.isVisible()) {
     popoverWindow.hide();
-  } else {
+  } else if (Date.now() - lastBlurHideAt > BLUR_CLICK_GRACE_MS) {
     showWindow();
   }
 }
@@ -157,6 +199,13 @@ function showWindow() {
   popoverWindow.focus();
 }
 
+// Open the popover straight on the Settings view
+function showSettingsWindow() {
+  if (!popoverWindow || popoverWindow.isDestroyed()) return;
+  popoverWindow.webContents.send('open-settings');
+  showWindow();
+}
+
 // Settings uses a wider two-column layout; re-center whenever the width changes
 function resizePopover(width, height) {
   if (!popoverWindow || popoverWindow.isDestroyed()) return;
@@ -175,7 +224,8 @@ function updateTrayTitle(usageList) {
   if (!tray) return;
   lastUsageList = usageList;
 
-  const showWeekly = secureStore.getSettings().trayWeeklyRing !== false;
+  const settings = secureStore.getSettings();
+  const showWeekly = settings.trayWeeklyRing !== false;
 
   const claudeItem = usageList.find(u => u.provider === 'claude');
   const antiItem = usageList.find(u => u.provider === 'antigravity');
@@ -192,10 +242,11 @@ function updateTrayTitle(usageList) {
   };
 
   // Draw percentage + ring for each provider (async, via the hidden canvas window)
-  renderTrayIcon([
-    { ...toRingData(claudeItem), base: 'claude' },
-    { ...toRingData(antiItem), base: 'antigravity' }
-  ]);
+  // Only the services chosen in Settings → Menu Bar
+  const groups = [];
+  if (settings.trayShowClaude !== false) groups.push({ ...toRingData(claudeItem), base: 'claude' });
+  if (settings.trayShowAntigravity !== false) groups.push({ ...toRingData(antiItem), base: 'antigravity' });
+  renderTrayIcon(groups);
 
   const tooltipSummary = usageList
     .map(u => `${u.name}: ${u.loggedIn ? `${u.percentUsed}% (${u.resetInText})` : 'Not connected'}`)
@@ -212,6 +263,7 @@ module.exports = {
   updateTrayTitle,
   getPopoverWindow,
   showWindow,
+  showSettingsWindow,
   toggleWindow,
   resizePopover
 };
