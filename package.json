@@ -1,0 +1,63 @@
+{
+  "name": "clawde",
+  "version": "1.0.0",
+  "description": "Clawde: macOS menu bar monitor for Claude and Antigravity usage limits",
+  "main": "src/main/index.js",
+  "scripts": {
+    "start": "electron .",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder",
+    "build:dmg": "electron-builder --mac dmg"
+  },
+  "keywords": [
+    "claude",
+    "gemini",
+    "menu-bar",
+    "system-tray",
+    "usage-monitor",
+    "rate-limits"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "electron-builder": "^25.1.8"
+  },
+  "dependencies": {
+    "electron": "^33.2.0"
+  },
+  "build": {
+    "appId": "com.clawde.app",
+    "productName": "Clawde",
+    "directories": {
+      "output": "dist"
+    },
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "extendInfo": {
+        "LSUIElement": 1
+      }
+    },
+    "dmg": {
+      "contents": [
+        {
+          "x": 130,
+          "y": 220
+        },
+        {
+          "x": 410,
+          "y": 220,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ],
+      "window": {
+        "width": 540,
+        "height": 380
+      }
+    }
+  }
+}

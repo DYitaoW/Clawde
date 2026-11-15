@@ -1,0 +1,14 @@
+# Dependencies (reinstalled with `npm install`)
+node_modules/
+
+# Build output (DMG/ZIP go on GitHub Releases, not in the repo)
+dist/
+out/
+
+# macOS
+.DS_Store
+
+# Logs / local env
+*.log
+npm-debug.log*
+.env

@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Tray Icon Renderer</title>
+</head>
+<body>
+<script>
+// Renders the menu bar icon with the real macOS system font (SF Pro) at the
+// same size macOS uses for menu bar text. Called from the main process via
+// executeJavaScript(`renderTrayIcon(...)`); returns a 2x PNG data URL.
+
+const SCALE = 2;                 // Retina: image is handed to macOS at scaleFactor 2
+const HEIGHT = 22 * SCALE;       // menu bar height
+const CENTER_Y = HEIGHT / 2;
+const FONT_SIZE = 12 * SCALE;    // Slightly smaller unbolded menu bar size (12pt)
+const FONT = `400 ${FONT_SIZE}px -apple-system, BlinkMacSystemFont, system-ui, "SF Pro Text", "Helvetica Neue", sans-serif`;
+
+const TEXT_RING_GAP = 3 * SCALE;
+const OUTER_R = 9.6 * SCALE;
+const OUTER_STROKE = 1.6 * SCALE;
+const INNER_R = 6.6 * SCALE;
+const INNER_STROKE = 1.3 * SCALE;
+const RING_SIZE = Math.ceil((OUTER_R + OUTER_STROKE / 2) * 2) + 1;
+const GROUP_GAP = 3 * SCALE;
+const EDGE_PAD = 1 * SCALE;
+
+const COLORS = {
+  claude: '#d97757',
+  claudeWeekly: '#fbcfe8',
+  antigravity: '#8ab4f8',
+  antigravityWeekly: '#8b5cf6',
+  warning: '#fbbf24',
+  critical: '#f87171',
+  track: 'rgba(255, 255, 255, 0.22)',
+  label: 'rgba(255, 255, 255, 0.95)',
+  labelInactive: 'rgba(255, 255, 255, 0.5)',
+  logo: 'rgba(255, 255, 255, 0.9)'
+};
+
+function statusColor(base, percent) {
+  if (percent >= 90) return COLORS.critical;
+  if (percent >= 70) return COLORS.warning;
+  return base;
+}
+
+// Digits are laid out on a fixed advance (widest digit) so numbers never shift
+function makeMetrics(ctx) {
+  ctx.font = FONT;
+  let digit = 0;
+  for (let d = 0; d <= 9; d++) digit = Math.max(digit, ctx.measureText(String(d)).width);
+  const zero = ctx.measureText('0');
+  const advance = (ch) => (/[0-9]/.test(ch) ? digit : ctx.measureText(ch).width);
+  const width = (str) => [...str].reduce((w, ch) => w + advance(ch), 0);
+  return {
+    advance,
+    width,
+    slot: Math.ceil(width('100%')),
+    // Baseline that centers digit height on the ring's middle
+    baseline: CENTER_Y + (zero.actualBoundingBoxAscent - zero.actualBoundingBoxDescent) / 2
+  };
+}
+
+function drawText(ctx, m, str, rightX, color) {
+  ctx.font = FONT;
+  ctx.fillStyle = color;
+  ctx.textBaseline = 'alphabetic';
+  ctx.textAlign = 'center';
+  let x = rightX - m.width(str);
+  for (const ch of str) {
+    const a = m.advance(ch);
+    ctx.fillText(ch, x + a / 2, m.baseline);
+    x += a;
+  }
+}
+
+function drawRing(ctx, cx, r, strokeW, percent, active, color, trackAlpha = 0.22) {
+  ctx.lineWidth = strokeW;
+  ctx.strokeStyle = `rgba(255, 255, 255, ${trackAlpha})`;
+  ctx.beginPath();
+  ctx.arc(cx, CENTER_Y, r, 0, Math.PI * 2);
+  ctx.stroke();
+
+  const frac = active ? Math.max(0, Math.min(1, percent / 100)) : 0;
+  if (frac <= 0) return;
+  ctx.strokeStyle = color;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  const start = -Math.PI / 2;
+  ctx.arc(cx, CENTER_Y, r, start, start + frac * Math.PI * 2);
+  ctx.stroke();
+  ctx.lineCap = 'butt';
+}
+
+function drawClaudeLogo(ctx, cx) {
+  const arm = 3.8 * SCALE;
+  ctx.strokeStyle = COLORS.logo;
+  ctx.lineWidth = 1.35 * SCALE;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  for (let i = 0; i < 4; i++) {
+    const a = (i * Math.PI) / 4;
+    ctx.moveTo(cx - Math.cos(a) * arm, CENTER_Y - Math.sin(a) * arm);
+    ctx.lineTo(cx + Math.cos(a) * arm, CENTER_Y + Math.sin(a) * arm);
+  }
+  ctx.stroke();
+  ctx.lineCap = 'butt';
+}
+
+function drawSparkleLogo(ctx, cx) {
+  const R = 4.4 * SCALE;
+  const k = 2 / 0.62; // superellipse exponent for the 4-point star
+  ctx.fillStyle = COLORS.logo;
+  ctx.beginPath();
+  for (let i = 0; i <= 160; i++) {
+    const t = (i / 160) * Math.PI * 2;
+    const c = Math.cos(t), s = Math.sin(t);
+    const x = cx + R * Math.sign(c) * Math.pow(Math.abs(c), k);
+    const y = CENTER_Y + R * Math.sign(s) * Math.pow(Math.abs(s), k);
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  }
+  ctx.closePath();
+  ctx.fill();
+}
+
+// providers: [{ active, sessionPercent, weeklyPercent, showWeekly, base: 'claude' | 'antigravity' }]
+function renderTrayIcon(providers) {
+  const canvas = document.createElement('canvas');
+  const measureCtx = canvas.getContext('2d');
+  const m = makeMetrics(measureCtx);
+  const groupWidth = m.slot + TEXT_RING_GAP + RING_SIZE;
+
+  canvas.width = EDGE_PAD * 2 + groupWidth * providers.length + GROUP_GAP * (providers.length - 1);
+  canvas.height = HEIGHT;
+  const ctx = canvas.getContext('2d');
+
+  providers.forEach((p, i) => {
+    const originX = EDGE_PAD + i * (groupWidth + GROUP_GAP);
+    const textRight = originX + m.slot;
+    const cx = textRight + TEXT_RING_GAP + RING_SIZE / 2;
+
+    const label = p.active ? `${Math.round(p.sessionPercent)}%` : '--%';
+    drawText(ctx, m, label, textRight, p.active ? COLORS.label : COLORS.labelInactive);
+
+    // Outer ring: session (5-hour window)
+    const sessionColor = statusColor(COLORS[p.base], p.sessionPercent);
+    drawRing(ctx, cx, OUTER_R, OUTER_STROKE, p.sessionPercent, p.active, sessionColor, 0.22);
+
+    // Inner ring: weekly quota (optional in the menu bar; always shown in the popover)
+    if (p.showWeekly !== false) {
+      const weeklyBase = p.base === 'claude' ? COLORS.claudeWeekly : COLORS.antigravityWeekly;
+      const weeklyColor = statusColor(weeklyBase, p.weeklyPercent);
+      drawRing(ctx, cx, INNER_R, INNER_STROKE, p.weeklyPercent, p.active, weeklyColor, 0.14);
+    }
+
+    if (p.base === 'claude') drawClaudeLogo(ctx, cx);
+    else drawSparkleLogo(ctx, cx);
+  });
+
+  return canvas.toDataURL('image/png');
+}
+</script>
+</body>
+</html>

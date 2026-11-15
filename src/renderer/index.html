@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Clawde</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="popover-container">
+    <header class="app-header">
+      <div class="header-left">
+        <span class="app-title">Clawde</span>
+      </div>
+      <div class="header-actions">
+        <div id="system-stats" class="system-stats" hidden>
+          <span class="system-stat"><span class="system-stat-label">CPU</span><span id="system-cpu" class="system-stat-value">--%</span></span>
+          <span class="system-stat"><span class="system-stat-label">MEM</span><span id="system-mem" class="system-stat-value">--%</span></span>
+        </div>
+      </div>
+    </header>
+
+    <main class="cards-container" id="main-view">
+      <!-- Claude Card -->
+      <section class="provider-card" id="card-claude">
+        <div class="card-header">
+          <div class="provider-pill pill-claude">
+            <svg class="provider-logo-svg" width="16" height="16" viewBox="0 0 24 24" fill="none">
+              <path d="M12 2v20M2 12h20M4.93 4.93l14.14 14.14M4.93 19.07l14.14-14.14" stroke="#d97757" stroke-width="3.2" stroke-linecap="round"/>
+            </svg>
+            <span class="provider-name">Claude</span>
+          </div>
+          <span class="connection-status" id="claude-status-badge">Connecting...</span>
+        </div>
+        <div class="card-content" id="claude-content">
+          <!-- Populated dynamically -->
+        </div>
+      </section>
+
+      <!-- Antigravity Card -->
+      <section class="provider-card" id="card-antigravity">
+        <div class="card-header">
+          <div class="provider-pill pill-antigravity">
+            <svg class="provider-logo-svg" width="16" height="16" viewBox="0 0 24 24" fill="#8ab4f8">
+              <path d="M12 2C12 7.52 7.52 12 2 12C7.52 12 12 16.48 12 22C12 16.48 16.48 12 22 12C16.48 12 12 7.52 12 2Z"/>
+            </svg>
+            <span class="provider-name">Antigravity</span>
+          </div>
+          <span class="connection-status" id="antigravity-status-badge">Connecting...</span>
+        </div>
+        <div class="card-content" id="antigravity-content">
+          <!-- Populated dynamically -->
+        </div>
+      </section>
+    </main>
+
+    <!-- Settings View -->
+    <section class="settings-view" id="settings-view" hidden>
+      <div class="settings-header">
+        <button id="settings-back-btn" class="icon-btn" title="Back">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M15 18l-6-6 6-6"/>
+          </svg>
+        </button>
+        <span class="settings-title">Settings</span>
+      </div>
+
+      <div class="settings-section-label">Accounts</div>
+      <div class="settings-group">
+        <div class="settings-row">
+          <div class="settings-row-info">
+            <svg class="provider-logo-svg" width="16" height="16" viewBox="0 0 24 24" fill="none">
+                  <path d="M12 2v20M2 12h20M4.93 4.93l14.14 14.14M4.93 19.07l14.14-14.14" stroke="#d97757" stroke-width="3.2" stroke-linecap="round"/>
+                </svg>
+            <div class="settings-row-text">
+              <span class="settings-row-name">Claude</span>
+              <span class="settings-row-status" id="settings-claude-status">Not connected</span>
+            </div>
+          </div>
+          <button class="settings-action-btn" id="settings-claude-btn" data-provider="claude">Connect</button>
+        </div>
+        <div class="settings-row">
+          <div class="settings-row-info">
+            <svg class="provider-logo-svg" width="16" height="16" viewBox="0 0 24 24" fill="#8ab4f8">
+                  <path d="M12 2C12 7.52 7.52 12 2 12C7.52 12 12 16.48 12 22C12 16.48 16.48 12 22 12C16.48 12 12 7.52 12 2Z"/>
+                </svg>
+            <div class="settings-row-text">
+              <span class="settings-row-name">Antigravity</span>
+              <span class="settings-row-status" id="settings-antigravity-status">Not connected</span>
+            </div>
+          </div>
+          <button class="settings-action-btn" id="settings-antigravity-btn" data-provider="antigravity">Connect</button>
+        </div>
+      </div>
+
+      <div class="settings-section-label">Preferences</div>
+      <div class="settings-group">
+        <div class="settings-row">
+          <div class="settings-row-text">
+            <span class="settings-row-name">System Stats</span>
+            <span class="settings-row-status">Show CPU and memory usage in the header</span>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="settings-system-toggle" checked>
+            <span class="slider"></span>
+          </label>
+        </div>
+
+        <div class="settings-row">
+          <div class="settings-row-text">
+            <span class="settings-row-name">Weekly Ring in Menu Bar</span>
+            <span class="settings-row-status">Show the inner weekly ring in the top bar</span>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="settings-tray-weekly-toggle" checked>
+            <span class="slider"></span>
+          </label>
+        </div>
+
+        <div class="settings-row">
+          <div class="settings-row-text">
+            <span class="settings-row-name">Refresh Button</span>
+            <span class="settings-row-status">Show refresh next to the update timer</span>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="settings-refresh-toggle" checked>
+            <span class="slider"></span>
+          </label>
+        </div>
+
+        <div class="settings-row">
+          <div class="settings-row-text">
+            <span class="settings-row-name">Launch at Login</span>
+            <span class="settings-row-status">Start automatically at system startup</span>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="settings-autostart-toggle">
+            <span class="slider"></span>
+          </label>
+        </div>
+
+        <div class="settings-row">
+          <div class="settings-row-text">
+            <span class="settings-row-name">Desktop Notifications</span>
+            <span class="settings-row-status">Alert when usage reaches threshold</span>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="settings-notify-toggle" checked>
+            <span class="slider"></span>
+          </label>
+        </div>
+
+        <div class="settings-row" id="settings-threshold-row">
+          <div class="settings-row-text">
+            <span class="settings-row-name">Alert Threshold</span>
+            <span class="settings-row-status">Notify when usage hits this percentage</span>
+          </div>
+          <div class="settings-threshold-control">
+            <input type="number" id="settings-threshold-input" min="50" max="99" step="5" value="80" class="threshold-input">
+            <span class="threshold-unit">%</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="settings-group">
+        <button id="quit-btn" class="settings-row settings-quit-row">
+          <span>Quit Clawde</span>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M18.36 6.64a9 9 0 1 1-12.73 0M12 2v10"/>
+          </svg>
+        </button>
+      </div>
+    </section>
+
+    <footer class="app-footer">
+      <div class="footer-left">
+        <span id="last-updated-text" class="timestamp">Updating...</span>
+        <button id="refresh-btn" class="icon-btn refresh-btn-small" title="Refresh now">
+          <svg id="refresh-icon" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
+          </svg>
+        </button>
+      </div>
+      <button id="settings-btn" class="icon-btn" title="Settings">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+        </svg>
+      </button>
+    </footer>
+  </div>
+
+  <script src="renderer.js"></script>
+</body>
+</html>
