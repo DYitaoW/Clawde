@@ -6,8 +6,8 @@
   "scripts": {
     "start": "electron .",
     "pack": "electron-builder --dir",
-    "dist": "electron-builder --mac --arm64",
-    "build:dmg": "electron-builder --mac --arm64"
+    "dist": "npm run build:dmg",
+    "build:dmg": "node scripts/check-signing.js && electron-builder --mac --arm64"
   },
   "keywords": [
     "claude",
@@ -49,7 +49,11 @@
         "LSUIElement": true
       },
       "minimumSystemVersion": "12.0",
-      "icon": "assets/icon-512.png"
+      "icon": "assets/icon-512.png",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist"
     },
     "dmg": {
       "contents": [
@@ -74,7 +78,15 @@
       "assets/**/*",
       "package.json"
     ],
-    "artifactName": "${productName}-${version}-${arch}.${ext}"
+    "artifactName": "${productName}-${version}-${arch}.${ext}",
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "DYitaoW",
+        "repo": "clawde",
+        "releaseType": "draft"
+      }
+    ]
   },
   "repository": {
     "type": "git",

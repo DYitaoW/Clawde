@@ -1,0 +1,141 @@
+# Builds, signs, notarizes and publishes Clawde on a GitHub-hosted Mac.
+#
+# Release:  bump "version" in package.json, commit, then push a matching tag:
+#             git tag v1.0.1 && git push origin v1.0.1
+#           → a DRAFT GitHub Release is created with the DMG + ZIP attached.
+#             Review it and click "Publish" (the in-app update check only sees
+#             published releases).
+# Test run: Actions tab → Release → "Run workflow" builds and signs without
+#           publishing; the DMG is attached to the run as an artifact.
+#
+# Required repository secrets (Settings → Secrets and variables → Actions):
+#   MAC_CERT_P12_BASE64   Developer ID Application certificate + private key (.p12), base64
+#   MAC_CERT_PASSWORD     Password chosen when exporting the .p12
+# Plus ONE way to log in to Apple's notarization service:
+#   Option A (Apple ID):
+#     APPLE_ID                      Apple Account email of the paid developer team
+#     APPLE_APP_SPECIFIC_PASSWORD   App-specific password (account.apple.com)
+#     APPLE_TEAM_ID                 10-character Team ID (developer.apple.com → Membership)
+#   Option B (App Store Connect API key):
+#     APPLE_API_KEY_P8              Contents of the AuthKey_XXXX.p8 file
+#     APPLE_API_KEY_ID              That key's Key ID
+#     APPLE_API_ISSUER              App Store Connect Issuer ID
+
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write # create the GitHub Release and upload files
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  mac:
+    runs-on: macos-14 # Apple Silicon runner
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Check tag matches package.json version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          EXPECTED="v$(node -p "require('./package.json').version")"
+          if [ "$EXPECTED" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match package.json version ($EXPECTED). Bump the version or fix the tag."
+            exit 1
+          fi
+
+      - name: Check secrets are configured
+        env:
+          MAC_CERT_P12_BASE64: ${{ secrets.MAC_CERT_P12_BASE64 }}
+          MAC_CERT_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          missing=0
+          check() { for name in "$@"; do [ -n "${!name}" ] || { echo "::error::Missing repository secret: $name"; missing=1; }; done; }
+          check MAC_CERT_P12_BASE64 MAC_CERT_PASSWORD
+          if [ -n "$APPLE_API_KEY_P8" ]; then
+            echo "Notarization login: App Store Connect API key"
+            check APPLE_API_KEY_ID APPLE_API_ISSUER
+          else
+            echo "Notarization login: Apple ID"
+            check APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID
+          fi
+          exit $missing
+
+      - run: npm ci
+
+      - name: Set up notarization login
+        env:
+          APPLE_ID_SECRET: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD_SECRET: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID_SECRET: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          APPLE_API_KEY_ID_SECRET: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_SECRET: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          if [ -n "$APPLE_API_KEY_P8" ]; then
+            # Option B: App Store Connect API key
+            printf '%s\n' "$APPLE_API_KEY_P8" > "$RUNNER_TEMP/AuthKey.p8"
+            chmod 600 "$RUNNER_TEMP/AuthKey.p8"
+            {
+              echo "APPLE_API_KEY=$RUNNER_TEMP/AuthKey.p8"
+              echo "APPLE_API_KEY_ID=$APPLE_API_KEY_ID_SECRET"
+              echo "APPLE_API_ISSUER=$APPLE_API_ISSUER_SECRET"
+            } >> "$GITHUB_ENV"
+          else
+            # Option A: Apple ID + app-specific password
+            {
+              echo "APPLE_ID=$APPLE_ID_SECRET"
+              echo "APPLE_APP_SPECIFIC_PASSWORD=$APPLE_APP_SPECIFIC_PASSWORD_SECRET"
+              echo "APPLE_TEAM_ID=$APPLE_TEAM_ID_SECRET"
+            } >> "$GITHUB_ENV"
+          fi
+
+      - name: Build, sign and notarize
+        env:
+          # Signing: electron-builder imports the .p12 into a temporary keychain
+          CSC_LINK: ${{ secrets.MAC_CERT_P12_BASE64 }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+          # Notarization login comes from the previous step (API key or Apple ID)
+          # Publishing to GitHub Releases (tag pushes only)
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PUBLISH=never
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then PUBLISH=always; fi
+          npx electron-builder --mac --arm64 --publish "$PUBLISH"
+
+      - name: Verify signature and notarization
+        run: |
+          codesign --verify --deep --strict --verbose=2 dist/mac-arm64/Clawde.app
+          spctl -a -vv -t exec dist/mac-arm64/Clawde.app 2>&1 | tee /dev/stderr | grep -q "Notarized Developer ID"
+
+      - name: Upload build (manual runs)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Clawde-mac-arm64
+          path: |
+            dist/*.dmg
+            dist/*.zip
+          retention-days: 7
+
+      - name: Remove API key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/AuthKey.p8"
