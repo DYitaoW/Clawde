@@ -12,3 +12,6 @@ out/
 *.log
 npm-debug.log*
 .env
+
+# Private developer notes
+DEVELOPMENT.md
