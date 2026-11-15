@@ -12,7 +12,7 @@ A small macOS menu bar app that shows how much of your **Claude** and **Google A
 - **Popover details**: session and weekly usage, time until each limit resets, and a pace indicator (% per hour).
 - **Alerts**: optional desktop notification when usage passes a threshold you choose.
 - **System stats**: optional CPU and memory usage in the popover header.
-- **Update check**: tells you when a new version is on GitHub.
+- **Automatic updates**: new versions download in the background and install on restart.
 - Works in light and dark menu bars.
 
 ## Requirements
@@ -24,19 +24,12 @@ A small macOS menu bar app that shows how much of your **Claude** and **Google A
 
 1. Download the latest `Clawde-x.y.z-arm64.dmg` from [Releases](https://github.com/DYitaoW/clawde/releases/latest).
 2. Open the DMG and drag **Clawde** into **Applications**.
-3. Open Clawde. Because the app isn't signed with a paid Apple Developer certificate, macOS will block it the first time:
-   - **macOS 15 (Sequoia) and later:** open **System Settings → Privacy & Security**, scroll down and click **Open Anyway** next to the Clawde message, then confirm.
-   - **macOS 12–14:** right-click (or Control-click) Clawde in Applications, choose **Open**, then **Open** again.
-   - **Or, in Terminal:**
-     ```bash
-     xattr -cr /Applications/Clawde.app
-     ```
-   You only need to do this once per version.
+3. Open Clawde. It's signed and notarized by Apple, so it opens like any other app.
 4. Clawde appears in the menu bar (there's no Dock icon). Click it and sign in to Claude and/or Antigravity.
 
 ## Updating
 
-Clawde checks GitHub for new versions twice a day. When one is available, an **Update** button appears at the bottom of the popover. Click it, download the new DMG and replace the app in Applications. You can also check manually in **Settings → About**.
+Clawde updates itself. It checks GitHub twice a day and downloads new versions in the background. When an update is ready, a **Restart to update** button appears at the bottom of the popover. Click it, or just keep going: the update installs the next time Clawde quits. You can also check manually in **Settings → About**.
 
 ## Privacy
 
@@ -96,8 +89,10 @@ Releases are built, signed and notarized automatically by [.github/workflows/rel
    git tag v1.0.1
    git push origin main v1.0.1
    ```
-3. Wait for the **Release** workflow in the Actions tab (about 5–15 minutes). It creates a **draft** release with the DMG and ZIP attached.
-4. Review the draft on the Releases page, add notes, and click **Publish**. Running copies of Clawde show the update within about 12 hours.
+3. Wait for the **Release** workflow in the Actions tab (about 5–15 minutes). It creates a **draft** release with the DMG, ZIP, blockmaps and `latest-mac.yml` attached.
+4. Review the draft on the Releases page, add notes, and click **Publish**. Running copies of Clawde download the update within about 12 hours.
+
+To release by hand instead, build locally (see above) and upload **all** of these from `dist/` to the release: `Clawde-x.y.z-arm64.dmg`, `Clawde-x.y.z-arm64.zip`, both `.blockmap` files and `latest-mac.yml`. The DMG is for new installs; the ZIP and `latest-mac.yml` are what auto-update uses.
 
 To test the pipeline without releasing, use **Actions → Release → Run workflow**; the signed DMG is attached to the run.
 

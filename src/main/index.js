@@ -298,6 +298,7 @@ ipcMain.handle('get-system-stats', () => getSystemStats());
 ipcMain.handle('get-update-status', () => updateCheck.getUpdateStatus());
 ipcMain.handle('check-for-updates', () => updateCheck.checkForUpdates());
 ipcMain.handle('open-release-page', () => updateCheck.openReleasePage());
+ipcMain.handle('install-update', () => updateCheck.installUpdate());
 
 ipcMain.handle('quit-app', () => {
   app.quit();

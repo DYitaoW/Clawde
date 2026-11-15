@@ -62,6 +62,12 @@ body {
   flex-direction: column;
   padding: 12px 14px 10px 14px;
   box-sizing: border-box;
+  transition: opacity 0.11s ease;
+}
+
+/* Main view ↔ settings switch: content fades while the window resizes */
+.popover-container.view-hidden {
+  opacity: 0;
 }
 
 /* Header */

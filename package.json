@@ -20,8 +20,8 @@
   "author": "Yitao",
   "license": "MIT",
   "devDependencies": {
-    "electron-builder": "^25.1.8",
-    "electron": "^33.2.0"
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
   },
   "build": {
     "appId": "com.clawde.app",
@@ -91,5 +91,8 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/DYitaoW/clawde.git"
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.11"
   }
 }

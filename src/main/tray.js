@@ -123,9 +123,13 @@ function toggleWindow() {
 // Centers the popover under the tray icon, kept on screen
 function positionWindow() {
   if (!tray || !popoverWindow) return;
+  const { x, y } = popoverPosition(popoverWindow.getBounds());
+  popoverWindow.setPosition(x, y, false);
+}
 
+// Where a popover of this size goes: centered under the tray icon, on screen
+function popoverPosition(windowBounds) {
   const trayBounds = tray.getBounds();
-  const windowBounds = popoverWindow.getBounds();
   const primaryDisplay = screen.getDisplayNearestPoint({ x: trayBounds.x, y: trayBounds.y });
   const displayBounds = primaryDisplay.workArea;
 
@@ -143,7 +147,7 @@ function positionWindow() {
     x = displayBounds.x + 8;
   }
 
-  popoverWindow.setPosition(x, y, false);
+  return { x, y };
 }
 
 function showWindow() {
@@ -158,8 +162,13 @@ function resizePopover(width, height) {
   if (!popoverWindow || popoverWindow.isDestroyed()) return;
   const [curW, curH] = popoverWindow.getContentSize();
   if (curW === width && curH === height) return;
-  popoverWindow.setContentSize(width, height);
-  if (curW !== width) positionWindow();
+  if (curW === width || !tray) {
+    popoverWindow.setContentSize(width, height);
+    return;
+  }
+  // Width changed: resize and re-center in one step so the window doesn't jump
+  const { x, y } = popoverPosition({ width, height });
+  popoverWindow.setBounds({ x, y, width, height }, false);
 }
 
 function updateTrayTitle(usageList) {

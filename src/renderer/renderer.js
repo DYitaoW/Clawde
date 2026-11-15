@@ -321,17 +321,41 @@ const MAIN_WIDTH = 310;
 const SETTINGS_WIDTH = 600; // two columns
 let popoverWidth = MAIN_WIDTH;
 
+let switchingView = false;
+const VIEW_FADE_MS = 110;
+const waitMs = (ms) => new Promise(r => setTimeout(r, ms));
+const nextFrame = () => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+// Lay out at the target width even before the window has resized
+popoverContainer.style.width = `${popoverWidth}px`;
+
 function reportPopoverSize() {
+  if (switchingView) return; // the view switch sizes the window itself
   window.api.resizePopover(popoverContainer.getBoundingClientRect().height, popoverWidth);
 }
 
-function showSettings(show) {
-  settingsView.hidden = !show;
-  mainView.hidden = show;
-  popoverWidth = show ? SETTINGS_WIDTH : MAIN_WIDTH;
-  reportPopoverSize();
+// Fade out → swap views and resize the window while hidden → fade in
+async function showSettings(show) {
+  if (switchingView || show === !settingsView.hidden) return;
+  switchingView = true;
   settingsBtn.classList.toggle('active', show);
-  if (show) renderSettings();
+  try {
+    popoverContainer.classList.add('view-hidden');
+    await waitMs(VIEW_FADE_MS);
+
+    settingsView.hidden = !show;
+    mainView.hidden = show;
+    if (show) renderSettings();
+    popoverWidth = show ? SETTINGS_WIDTH : MAIN_WIDTH;
+    popoverContainer.style.width = `${popoverWidth}px`;
+
+    await window.api.resizePopover(popoverContainer.getBoundingClientRect().height, popoverWidth);
+    await nextFrame(); // let the resized window repaint before showing content
+  } finally {
+    popoverContainer.classList.remove('view-hidden');
+    switchingView = false;
+  }
+  reportPopoverSize(); // catch any content change during the switch
 }
 
 async function handleSettingsAction(provider) {
@@ -540,28 +564,45 @@ function renderUpdateStatus(status) {
   if (!status) return;
   updateStatus = status;
   versionNameEl.textContent = `Clawde v${status.currentVersion}`;
-  updatePill.hidden = !status.updateAvailable;
-  if (status.updateAvailable) {
-    updatePill.textContent = `Update v${status.latestVersion}`;
-    updateStatusEl.textContent = `Version ${status.latestVersion} is available`;
-    updateStatusEl.classList.add('connected');
+  const v = status.latestVersion;
+  // Footer pill only when there's something to click
+  updatePill.hidden = !(status.readyToInstall || status.state === 'available');
+  updatePill.textContent = status.readyToInstall ? 'Restart to update' : `Update v${v}`;
+  updatePill.title = status.readyToInstall ? `Restart Clawde to install v${v}` : 'Download the new version';
+  updateStatusEl.classList.toggle('connected', status.updateAvailable);
+  updateBtn.disabled = false;
+  if (status.readyToInstall) {
+    updateStatusEl.textContent = `Version ${v} is ready to install`;
+    updateBtn.textContent = 'Restart';
+  } else if (status.state === 'downloading') {
+    updateStatusEl.textContent = `Downloading ${v}… ${status.progress || 0}%`;
+    updateBtn.textContent = 'Check';
+    updateBtn.disabled = true;
+  } else if (status.state === 'available') {
+    updateStatusEl.textContent = `Version ${v} is available`;
     updateBtn.textContent = 'Download';
+  } else if (status.state === 'checking') {
+    updateStatusEl.textContent = 'Checking for updates…';
+    updateBtn.textContent = 'Checking...';
+    updateBtn.disabled = true;
   } else {
-    updateStatusEl.classList.remove('connected');
-    updateStatusEl.textContent = status.error
+    updateStatusEl.textContent = status.state === 'error'
       ? 'Could not check for updates'
       : status.checkedAt ? 'You are up to date' : 'Not checked yet';
     updateBtn.textContent = 'Check';
   }
-  updateBtn.disabled = false;
 }
 
-updatePill.addEventListener('click', () => window.api.openReleasePage());
+function handleUpdateAction() {
+  if (!updateStatus) return false;
+  if (updateStatus.readyToInstall) { window.api.installUpdate(); return true; }
+  if (updateStatus.state === 'available') { window.api.openReleasePage(); return true; }
+  return false;
+}
+
+updatePill.addEventListener('click', handleUpdateAction);
 updateBtn.addEventListener('click', async () => {
-  if (updateStatus && updateStatus.updateAvailable) {
-    window.api.openReleasePage();
-    return;
-  }
+  if (handleUpdateAction()) return;
   updateBtn.disabled = true;
   updateBtn.textContent = 'Checking...';
   renderUpdateStatus(await window.api.checkForUpdates());
