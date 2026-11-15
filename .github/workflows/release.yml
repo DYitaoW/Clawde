@@ -37,7 +37,7 @@ concurrency:
 
 jobs:
   mac:
-    runs-on: macos-14 # Apple Silicon runner
+    runs-on: macos-latest # current GitHub-hosted Apple Silicon Mac
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
