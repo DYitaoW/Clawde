@@ -81,7 +81,6 @@ function openLogin(provider, onSuccess, onFailure) {
         }
 
         if (hasSessionKey && (isPastLogin || isChatDomReady)) {
-          console.log('[LoginWindow] Claude login verified! Fetching usage directly from page...');
           isDone = true;
           clearInterval(checkInterval);
 
@@ -102,7 +101,6 @@ function openLogin(provider, onSuccess, onFailure) {
             })()
           `).catch(e => ({ error: e.message }));
 
-          console.log('[LoginWindow] In-page usage result:', JSON.stringify(pageResult));
 
           secureStore.saveSession('claude', {
             cookies: allCookies,
@@ -134,7 +132,6 @@ function openLogin(provider, onSuccess, onFailure) {
         }
 
         if (hasGoogleAuth && (isGeminiPage || isGeminiDomReady)) {
-          console.log('[LoginWindow] Gemini web login verified!');
           isDone = true;
           clearInterval(checkInterval);
 

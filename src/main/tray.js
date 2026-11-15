@@ -1,4 +1,4 @@
-const { Tray, BrowserWindow, screen, nativeImage } = require('electron');
+const { Tray, BrowserWindow, screen, nativeImage, nativeTheme } = require('electron');
 const path = require('path');
 const secureStore = require('./secureStore');
 
@@ -10,6 +10,7 @@ let popoverWindow = null;
 let iconRendererWindow = null;
 let iconRendererReady = null;
 let pendingIconData = null;
+let lastUsageList = [];
 let iconRenderInFlight = false;
 
 function getIconRenderer() {
@@ -37,7 +38,10 @@ async function renderTrayIcon(providers) {
       const data = pendingIconData;
       pendingIconData = null;
       const win = await getIconRenderer();
-      const dataUrl = await win.webContents.executeJavaScript(`renderTrayIcon(${JSON.stringify(data)})`);
+      const options = { dark: nativeTheme.shouldUseDarkColors };
+      const dataUrl = await win.webContents.executeJavaScript(
+        `renderTrayIcon(${JSON.stringify(data)}, ${JSON.stringify(options)})`
+      );
       const png = nativeImage.createFromDataURL(dataUrl).toPNG();
       if (tray && !tray.isDestroyed()) {
         tray.setImage(nativeImage.createFromBuffer(png, { scaleFactor: 2.0 }));
@@ -62,6 +66,9 @@ function createTray() {
   }
 
   tray = new Tray(icon);
+
+  // Redraw with matching ink when the menu bar switches between light and dark
+  nativeTheme.on('updated', () => updateTrayTitle(lastUsageList));
   tray.setToolTip('Clawde (Claude & Antigravity usage)');
 
   createPopoverWindow();
@@ -113,7 +120,8 @@ function toggleWindow() {
   }
 }
 
-function showWindow() {
+// Centers the popover under the tray icon, kept on screen
+function positionWindow() {
   if (!tray || !popoverWindow) return;
 
   const trayBounds = tray.getBounds();
@@ -136,12 +144,27 @@ function showWindow() {
   }
 
   popoverWindow.setPosition(x, y, false);
+}
+
+function showWindow() {
+  if (!tray || !popoverWindow) return;
+  positionWindow();
   popoverWindow.show();
   popoverWindow.focus();
 }
 
+// Settings uses a wider two-column layout; re-center whenever the width changes
+function resizePopover(width, height) {
+  if (!popoverWindow || popoverWindow.isDestroyed()) return;
+  const [curW, curH] = popoverWindow.getContentSize();
+  if (curW === width && curH === height) return;
+  popoverWindow.setContentSize(width, height);
+  if (curW !== width) positionWindow();
+}
+
 function updateTrayTitle(usageList) {
   if (!tray) return;
+  lastUsageList = usageList;
 
   const showWeekly = secureStore.getSettings().trayWeeklyRing !== false;
 
@@ -180,5 +203,6 @@ module.exports = {
   updateTrayTitle,
   getPopoverWindow,
   showWindow,
-  toggleWindow
+  toggleWindow,
+  resizePopover
 };

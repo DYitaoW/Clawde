@@ -13,6 +13,12 @@ const fs = require('fs');
     : path.join(app.getPath('appData'), 'Clawde'));
 }
 
+// Only one copy may run: two copies sharing the data folder corrupt Chromium's
+// site storage (e.g. claude.ai IndexedDB). A second launch just opens the popover.
+if (!app.requestSingleInstanceLock()) {
+  app.exit(0);
+}
+
 // Clean User-Agent fallback
 const chromeVersion = process.versions.chrome || '131.0.0.0';
 const cleanUserAgent = process.platform === 'darwin'
@@ -21,12 +27,13 @@ const cleanUserAgent = process.platform === 'darwin'
 
 app.userAgentFallback = cleanUserAgent;
 
-const { createTray, updateTrayTitle, getPopoverWindow } = require('./tray');
+const { createTray, updateTrayTitle, getPopoverWindow, showWindow, resizePopover } = require('./tray');
 const { openLogin } = require('./loginWindow');
 const claudeProvider = require('./providers/claude');
 const antigravityProvider = require('./providers/antigravity');
 const secureStore = require('./secureStore');
 const { getSystemStats } = require('./systemStats');
+const updateCheck = require('./updateCheck');
 
 let currentUsage = [];
 let refreshTimer = null;
@@ -184,6 +191,11 @@ function startPolling() {
 app.whenReady().then(async () => {
   createTray();
 
+  updateCheck.startUpdateChecks((status) => {
+    const popover = getPopoverWindow();
+    if (popover && !popover.isDestroyed()) popover.webContents.send('update-status', status);
+  });
+
   // Restore sessions across app restarts / reloads
   await Promise.all([
     claudeProvider.restoreSession(),
@@ -283,18 +295,31 @@ ipcMain.handle('update-settings', (_event, updates) => {
 
 ipcMain.handle('get-system-stats', () => getSystemStats());
 
+ipcMain.handle('get-update-status', () => updateCheck.getUpdateStatus());
+ipcMain.handle('check-for-updates', () => updateCheck.checkForUpdates());
+ipcMain.handle('open-release-page', () => updateCheck.openReleasePage());
+
 ipcMain.handle('quit-app', () => {
   app.quit();
 });
 
-// Popover reports its content height so the window hugs the content (no empty space)
-ipcMain.handle('resize-popover', (_event, height) => {
+// Popover theme changed: match the native window background (avoids flashes on resize)
+ipcMain.handle('set-popover-background', (_event, color) => {
   const win = getPopoverWindow();
-  if (!win || win.isDestroyed()) return;
-  const h = Math.max(120, Math.min(800, Math.ceil(Number(height) || 0)));
-  const [w, current] = win.getContentSize();
-  if (current !== h) win.setContentSize(w, h);
+  const m = /^rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(String(color || ''));
+  if (!win || win.isDestroyed() || !m) return;
+  const hex = '#' + m.slice(1, 4).map(n => Number(n).toString(16).padStart(2, '0')).join('');
+  win.setBackgroundColor(hex);
 });
+
+// Popover reports its content height so the window hugs the content (no empty space)
+ipcMain.handle('resize-popover', (_event, height, width) => {
+  const h = Math.max(120, Math.min(800, Math.ceil(Number(height) || 0)));
+  const w = Math.max(280, Math.min(720, Math.round(Number(width) || 310)));
+  resizePopover(w, h);
+});
+
+app.on('second-instance', () => showWindow());
 
 app.on('window-all-closed', (e) => {
   e.preventDefault();

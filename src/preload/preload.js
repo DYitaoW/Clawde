@@ -7,9 +7,18 @@ contextBridge.exposeInMainWorld('api', {
   submitAntigravityCode: (code) => ipcRenderer.invoke('antigravity-submit-code', code),
   logout: (provider) => ipcRenderer.invoke('log-out', provider),
   quit: () => ipcRenderer.invoke('quit-app'),
-  resizePopover: (height) => ipcRenderer.invoke('resize-popover', height),
+  resizePopover: (height, width) => ipcRenderer.invoke('resize-popover', height, width),
+  setPopoverBackground: (color) => ipcRenderer.invoke('set-popover-background', color),
   getSettings: () => ipcRenderer.invoke('get-settings'),
   getSystemStats: () => ipcRenderer.invoke('get-system-stats'),
+  getUpdateStatus: () => ipcRenderer.invoke('get-update-status'),
+  checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
+  openReleasePage: () => ipcRenderer.invoke('open-release-page'),
+  onUpdateStatus: (callback) => {
+    const handler = (_event, status) => callback(status);
+    ipcRenderer.on('update-status', handler);
+    return () => ipcRenderer.removeListener('update-status', handler);
+  },
   updateSettings: (settings) => ipcRenderer.invoke('update-settings', settings),
   onUsageUpdated: (callback) => {
     const handler = (_event, data) => callback(data);

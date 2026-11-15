@@ -12,6 +12,8 @@ const settingsView = document.getElementById('settings-view');
 
 let lastFetchTime = null;
 let lastUsage = [];
+const popoverContainer = document.querySelector('.popover-container');
+let pacingEnabled = true; // show the pace (%/h) badge on each card
 
 // Popover gauge: outer ring = 5-hour window, inner ring = weekly quota
 const OUTER_RADIUS = 25;
@@ -80,7 +82,7 @@ function renderProviderCard(provider, data) {
   const burn = data.burnRate;
   // Strip any emoji/symbol prefix and show a simple trend icon instead
   const burnText = burn && burn.text ? burn.text.replace(/^[^\w+.-]+/u, '').trim() : '';
-  const burnBadgeHtml = burnText ? `
+  const burnBadgeHtml = (pacingEnabled && burnText) ? `
     <span class="burn-rate-badge ${burn.status || 'idle'}" title="Usage pace: ${burnText}">
       <svg class="burn-rate-icon" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
         <path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/>
@@ -131,10 +133,7 @@ function renderProviderCard(provider, data) {
   `;
 }
 
-function updateUI(usageList) {
-  if (!Array.isArray(usageList) || usageList.length === 0) return;
-  lastUsage = usageList;
-
+function renderCards(usageList) {
   for (const item of usageList) {
     if (!item) continue;
     if (item.provider === 'claude') {
@@ -143,6 +142,13 @@ function updateUI(usageList) {
       renderProviderCard('antigravity', item);
     }
   }
+}
+
+function updateUI(usageList) {
+  if (!Array.isArray(usageList) || usageList.length === 0) return;
+  lastUsage = usageList;
+
+  renderCards(usageList);
 
   renderSettings();
 
@@ -293,6 +299,8 @@ async function renderSettings() {
       if (systemToggle) systemToggle.checked = settings.systemStatsEnabled !== false;
       const trayWeeklyToggle = document.getElementById('settings-tray-weekly-toggle');
       if (trayWeeklyToggle) trayWeeklyToggle.checked = settings.trayWeeklyRing !== false;
+      const pacingToggle = document.getElementById('settings-pacing-toggle');
+      if (pacingToggle) pacingToggle.checked = settings.pacingEnabled !== false;
       const refreshToggle = document.getElementById('settings-refresh-toggle');
       if (refreshToggle) refreshToggle.checked = settings.refreshButtonEnabled !== false;
       if (notifyToggle) {
@@ -309,9 +317,19 @@ async function renderSettings() {
   }
 }
 
+const MAIN_WIDTH = 310;
+const SETTINGS_WIDTH = 600; // two columns
+let popoverWidth = MAIN_WIDTH;
+
+function reportPopoverSize() {
+  window.api.resizePopover(popoverContainer.getBoundingClientRect().height, popoverWidth);
+}
+
 function showSettings(show) {
   settingsView.hidden = !show;
   mainView.hidden = show;
+  popoverWidth = show ? SETTINGS_WIDTH : MAIN_WIDTH;
+  reportPopoverSize();
   settingsBtn.classList.toggle('active', show);
   if (show) renderSettings();
 }
@@ -454,21 +472,105 @@ if (refreshToggle) {
   });
 }
 
+// Appearance: 'system' follows macOS, or force 'light' / 'dark'
+const themeControl = document.getElementById('settings-theme');
+const systemDarkQuery = window.matchMedia('(prefers-color-scheme: dark)');
+let themePreference = 'system';
+
+function applyTheme(pref) {
+  themePreference = ['light', 'dark'].includes(pref) ? pref : 'system';
+  const dark = themePreference === 'dark' || (themePreference === 'system' && systemDarkQuery.matches);
+  document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+  for (const btn of themeControl.querySelectorAll('button')) {
+    const active = btn.dataset.themeValue === themePreference;
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-checked', String(active));
+  }
+  // Match the native window background so resizes don't flash the other theme
+  window.api.setPopoverBackground(getComputedStyle(document.body).backgroundColor);
+}
+
+systemDarkQuery.addEventListener('change', () => {
+  if (themePreference === 'system') applyTheme('system');
+});
+
+themeControl.addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-theme-value]');
+  if (!btn) return;
+  applyTheme(btn.dataset.themeValue);
+  window.api.updateSettings({ theme: themePreference });
+});
+
+applyTheme('system'); // until saved settings load
+
+// Pacing badge visibility
+function applyPacingEnabled(enabled) {
+  pacingEnabled = enabled;
+  renderCards(lastUsage);
+}
+
+const pacingToggle = document.getElementById('settings-pacing-toggle');
+if (pacingToggle) {
+  pacingToggle.addEventListener('change', (e) => {
+    applyPacingEnabled(e.target.checked);
+    window.api.updateSettings({ pacingEnabled: e.target.checked });
+  });
+}
+
 window.api.getSettings()
   .then(s => {
     applySystemStatsEnabled(!s || s.systemStatsEnabled !== false);
     applyRefreshButtonEnabled(!s || s.refreshButtonEnabled !== false);
+    applyPacingEnabled(!s || s.pacingEnabled !== false);
+    applyTheme(s && s.theme);
   })
   .catch(() => {
     applySystemStatsEnabled(true);
     applyRefreshButtonEnabled(true);
   });
 
+// Update check (GitHub Releases)
+const updatePill = document.getElementById('update-pill');
+const updateBtn = document.getElementById('settings-update-btn');
+const updateStatusEl = document.getElementById('settings-update-status');
+const versionNameEl = document.getElementById('settings-version-name');
+let updateStatus = null;
+
+function renderUpdateStatus(status) {
+  if (!status) return;
+  updateStatus = status;
+  versionNameEl.textContent = `Clawde v${status.currentVersion}`;
+  updatePill.hidden = !status.updateAvailable;
+  if (status.updateAvailable) {
+    updatePill.textContent = `Update v${status.latestVersion}`;
+    updateStatusEl.textContent = `Version ${status.latestVersion} is available`;
+    updateStatusEl.classList.add('connected');
+    updateBtn.textContent = 'Download';
+  } else {
+    updateStatusEl.classList.remove('connected');
+    updateStatusEl.textContent = status.error
+      ? 'Could not check for updates'
+      : status.checkedAt ? 'You are up to date' : 'Not checked yet';
+    updateBtn.textContent = 'Check';
+  }
+  updateBtn.disabled = false;
+}
+
+updatePill.addEventListener('click', () => window.api.openReleasePage());
+updateBtn.addEventListener('click', async () => {
+  if (updateStatus && updateStatus.updateAvailable) {
+    window.api.openReleasePage();
+    return;
+  }
+  updateBtn.disabled = true;
+  updateBtn.textContent = 'Checking...';
+  renderUpdateStatus(await window.api.checkForUpdates());
+});
+window.api.onUpdateStatus(renderUpdateStatus);
+window.api.getUpdateStatus().then(renderUpdateStatus).catch(() => {});
+
 // Keep the popover window exactly as tall as its content
-const popoverContainer = document.querySelector('.popover-container');
-new ResizeObserver(() => {
-  window.api.resizePopover(popoverContainer.getBoundingClientRect().height);
-}).observe(popoverContainer);
+new ResizeObserver(reportPopoverSize).observe(popoverContainer);
 
 // Live countdown ticker
 setInterval(updateNextRefreshText, 1000);

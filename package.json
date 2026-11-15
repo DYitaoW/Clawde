@@ -6,23 +6,21 @@
   "scripts": {
     "start": "electron .",
     "pack": "electron-builder --dir",
-    "dist": "electron-builder",
-    "build:dmg": "electron-builder --mac dmg"
+    "dist": "electron-builder --mac --arm64",
+    "build:dmg": "electron-builder --mac --arm64"
   },
   "keywords": [
     "claude",
-    "gemini",
     "menu-bar",
     "system-tray",
     "usage-monitor",
-    "rate-limits"
+    "rate-limits",
+    "antigravity"
   ],
-  "author": "",
+  "author": "Yitao",
   "license": "MIT",
   "devDependencies": {
-    "electron-builder": "^25.1.8"
-  },
-  "dependencies": {
+    "electron-builder": "^25.1.8",
     "electron": "^33.2.0"
   },
   "build": {
@@ -34,12 +32,24 @@
     "mac": {
       "category": "public.app-category.developer-tools",
       "target": [
-        "dmg",
-        "zip"
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "arm64"
+          ]
+        }
       ],
       "extendInfo": {
-        "LSUIElement": 1
-      }
+        "LSUIElement": true
+      },
+      "minimumSystemVersion": "12.0",
+      "icon": "assets/icon-512.png"
     },
     "dmg": {
       "contents": [
@@ -58,6 +68,16 @@
         "width": 540,
         "height": 380
       }
-    }
+    },
+    "files": [
+      "src/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
+    "artifactName": "${productName}-${version}-${arch}.${ext}"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/DYitaoW/clawde.git"
   }
 }

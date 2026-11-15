@@ -322,7 +322,6 @@ class AntigravityProvider {
               const parsed = this.parseAntigravityQuota(res);
               if (parsed) {
                 this.activeServer = { port: c.port, token: c.token, isHttps };
-                console.log(`[AntigravityProvider] Connected to local Language Server on port ${c.port} (${isHttps ? 'HTTPS' : 'HTTP'})`);
                 return parsed;
               }
             }
@@ -722,7 +721,6 @@ class AntigravityProvider {
           }
 
           if (code) {
-            console.log('[AntigravityProvider] Received OAuth authorization code. Exchanging with PKCE...');
 
             let tokenData = null;
             try {
@@ -740,7 +738,6 @@ class AntigravityProvider {
 
               if (tokenRes.ok) {
                 tokenData = await tokenRes.json();
-                console.log('[AntigravityProvider] Token exchange successful! Access token obtained.');
               } else {
                 const errText = await tokenRes.text().catch(() => '');
                 console.error('[AntigravityProvider] Token exchange failed with status', tokenRes.status, ':', errText);
@@ -824,7 +821,6 @@ class AntigravityProvider {
     });
 
     this.server.listen(port, '127.0.0.1', () => {
-      console.log(`[AntigravityProvider] OAuth listener bound to http://127.0.0.1:${port}/oauth-callback`);
 
       const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?` + new URLSearchParams({
         client_id: CLIENT_ID,
@@ -838,7 +834,6 @@ class AntigravityProvider {
         prompt: 'consent'
       }).toString();
 
-      console.log('[AntigravityProvider] Opening authorization URL in default browser...');
       shell.openExternal(authUrl);
     });
 
@@ -960,7 +955,6 @@ class AntigravityProvider {
       if (accessToken) {
         let remoteResult = await this.fetchRemoteQuota(accessToken);
         if (remoteResult && remoteResult.error === 'unauthorized' && (refreshToken || tokens.refresh_token)) {
-          console.log('[AntigravityProvider] OAuth token expired, refreshing with Google...');
           const freshToken = await this.refreshAccessToken(refreshToken || tokens.refresh_token);
           if (freshToken) {
             tokens.access_token = freshToken;

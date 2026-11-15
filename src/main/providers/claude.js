@@ -1,4 +1,4 @@
-const { session, net, BrowserWindow } = require('electron');
+const { session, BrowserWindow } = require('electron');
 const secureStore = require('../secureStore');
 
 const CLAUDE_PARTITION = 'persist:claude';
@@ -22,7 +22,7 @@ class ClaudeProvider {
   constructor() {
     this.name = 'Claude';
     this.id = 'claude';
-    this.bgWindow = null;
+    this.orgId = null;
     this.cachedUsage = null;
   }
 
@@ -30,21 +30,109 @@ class ClaudeProvider {
     return session.fromPartition(CLAUDE_PARTITION);
   }
 
-  ensureBackgroundWorker() {
-    if (this.bgWindow && !this.bgWindow.isDestroyed()) return;
+  // Hidden claude.ai page, used only as a fallback when a direct request is
+  // blocked (e.g. a Cloudflare check). Opened per fetch and closed right after,
+  // so no full claude.ai web app keeps running in the background.
+  async fetchViaTemporaryPage() {
+    let win = null;
+    try {
+      win = new BrowserWindow({
+        width: 100,
+        height: 100,
+        show: false,
+        webPreferences: {
+          partition: CLAUDE_PARTITION,
+          nodeIntegration: false,
+          contextIsolation: true
+        }
+      });
+      const loaded = win.loadURL('https://claude.ai/new').catch(() => null);
+      await Promise.race([loaded, new Promise(r => setTimeout(r, 15000))]);
+      if (win.isDestroyed()) return null;
 
-    this.bgWindow = new BrowserWindow({
-      width: 100,
-      height: 100,
-      show: false,
-      webPreferences: {
-        partition: CLAUDE_PARTITION,
-        nodeIntegration: false,
-        contextIsolation: true
+      const result = await Promise.race([
+        win.webContents.executeJavaScript(`
+          (async () => {
+            try {
+              const orgsRes = await fetch('/api/organizations');
+              if (!orgsRes.ok) return { error: 'orgs_' + orgsRes.status };
+              const orgs = await orgsRes.json();
+              if (!orgs || !orgs[0]) return { error: 'no_orgs' };
+              const orgId = orgs[0].uuid;
+              const usageRes = await fetch('/api/organizations/' + orgId + '/usage');
+              const usage = usageRes.ok ? await usageRes.json() : null;
+              return { success: true, orgId, usage };
+            } catch (e) {
+              return { error: e.message };
+            }
+          })()
+        `).catch(() => null),
+        new Promise(r => setTimeout(() => r(null), 10000))
+      ]);
+
+      if (result && result.success && result.usage) {
+        this.orgId = result.orgId;
+        return result.usage;
       }
-    });
+    } catch (e) {
+      console.warn('[ClaudeProvider] Fallback page fetch failed:', e.message);
+    } finally {
+      if (win && !win.isDestroyed()) win.destroy();
+    }
+    return null;
+  }
 
-    this.bgWindow.loadURL('https://claude.ai/new');
+  // Primary path: plain requests through the Claude session's own network stack
+  // (sends its cookies automatically). No page, scripts or renderer process.
+  async fetchDirect() {
+    const ses = this.getSession();
+    const headers = {
+      'Accept': 'application/json, text/plain, */*',
+      'Referer': 'https://claude.ai/'
+    };
+    const getJson = async (url) => {
+      const res = await ses.fetch(url, { headers });
+      if (!res.ok) return { status: res.status, json: null };
+      const type = res.headers.get('content-type') || '';
+      if (!type.includes('application/json')) return { status: res.status, json: null }; // challenge/HTML page
+      return { status: res.status, json: await res.json() };
+    };
+
+    try {
+      if (!this.orgId) {
+        const saved = secureStore.getSession('claude');
+        if (saved && saved.orgId) this.orgId = saved.orgId;
+      }
+
+      for (let attempt = 0; attempt < 2; attempt++) {
+        if (!this.orgId) {
+          const orgs = await getJson('https://claude.ai/api/organizations');
+          if (!Array.isArray(orgs.json) || !orgs.json[0]) return null;
+          this.orgId = orgs.json[0].uuid;
+        }
+        const usage = await getJson(`https://claude.ai/api/organizations/${this.orgId}/usage`);
+        if (usage.json) return usage.json;
+        // Cached org may be stale (e.g. switched accounts): look it up again once
+        this.orgId = null;
+      }
+    } catch (e) {
+      console.warn('[ClaudeProvider] Direct fetch failed:', e.message);
+    }
+    return null;
+  }
+
+  // One-time cleanup: the old always-on claude.ai page left ~150MB+ of web cache,
+  // service workers and IndexedDB in the Claude partition. Cookies are untouched.
+  async cleanupOldPageData() {
+    if (secureStore.getSettings().claudePageDataCleaned) return;
+    try {
+      const ses = this.getSession();
+      await ses.clearCache();
+      await ses.clearStorageData({ storages: ['serviceworkers', 'cachestorage', 'indexdb', 'shadercache'] });
+      secureStore.updateSettings({ claudePageDataCleaned: true });
+    } catch (e) {
+      console.warn('[ClaudeProvider] Cache cleanup skipped:', e.message);
+    }
   }
 
   async restoreSession() {
@@ -56,7 +144,6 @@ class ClaudeProvider {
       if (!hasKey) {
         const savedSession = secureStore.getSession('claude');
         if (savedSession && Array.isArray(savedSession.cookies)) {
-          console.log('[ClaudeProvider] Restoring persistent Claude session from local store...');
           const oneYearExpiry = Math.floor(Date.now() / 1000) + (365 * 24 * 3600);
 
           for (const c of savedSession.cookies) {
@@ -78,13 +165,10 @@ class ClaudeProvider {
             } catch (err) {}
           }
           await ses.cookies.flushStore();
-          console.log('[ClaudeProvider] Persistent session restored.');
-          this.ensureBackgroundWorker();
           return true;
         }
       } else {
         await ses.cookies.flushStore();
-        this.ensureBackgroundWorker();
         return true;
       }
     } catch (e) {
@@ -111,41 +195,6 @@ class ClaudeProvider {
     }
   }
 
-  async fetchViaInPage() {
-    if (!this.bgWindow || this.bgWindow.isDestroyed()) {
-      this.ensureBackgroundWorker();
-      return null;
-    }
-
-    try {
-      const scriptPromise = this.bgWindow.webContents.executeJavaScript(`
-        (async () => {
-          try {
-            const orgsRes = await fetch('/api/organizations');
-            if (!orgsRes.ok) return { error: 'orgs_' + orgsRes.status };
-            const orgs = await orgsRes.json();
-            if (!orgs || !orgs[0]) return { error: 'no_orgs' };
-            const orgId = orgs[0].uuid;
-            const usageRes = await fetch('/api/organizations/' + orgId + '/usage');
-            const usage = usageRes.ok ? await usageRes.json() : null;
-            return { success: true, orgId, usage };
-          } catch (e) {
-            return { error: e.message };
-          }
-        })()
-      `).catch(() => null);
-
-      const timeoutPromise = new Promise(resolve => setTimeout(() => resolve(null), 3000));
-      const result = await Promise.race([scriptPromise, timeoutPromise]);
-
-      if (result && result.success && result.usage) {
-        return result.usage;
-      }
-    } catch (e) {}
-
-    return null;
-  }
-
   async fetchUsage() {
     try {
       const isAuth = await this.checkAuth();
@@ -165,48 +214,17 @@ class ClaudeProvider {
       }
 
       secureStore.setProviderLoggedIn('claude', true);
-      this.ensureBackgroundWorker();
+      this.cleanupOldPageData();
 
-      let usageData = await this.fetchViaInPage();
-
-      // Check cached usage from loginWindow or secureStore
+      // 1. Direct request (normal case)  2. Short-lived page (if blocked)
+      // 3. Last known usage (offline / both failed)
+      let usageData = await this.fetchDirect();
+      if (!usageData) usageData = await this.fetchViaTemporaryPage();
       if (!usageData) {
         const savedSession = secureStore.getSession('claude');
         if (savedSession && savedSession.lastUsage) {
           usageData = savedSession.lastUsage;
         }
-      }
-
-      // Fallback: If still warming up, use net.fetch with partition cookies
-      if (!usageData) {
-        const ses = this.getSession();
-        const cookies = await ses.cookies.get({});
-        const cookieHeader = cookies
-          .filter(c => (c.domain && c.domain.includes('claude.ai')) || c.name === 'sessionKey')
-          .map(c => `${c.name}=${c.value}`)
-          .join('; ');
-
-        const fetchFn = (net && typeof net.fetch === 'function') ? net.fetch.bind(net) : globalThis.fetch;
-        const headers = {
-          'Accept': 'application/json, text/plain, */*',
-          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
-          'Cookie': cookieHeader,
-          'Referer': 'https://claude.ai/'
-        };
-
-        try {
-          const orgsRes = await fetchFn('https://claude.ai/api/organizations', { headers });
-          if (orgsRes.ok) {
-            const orgs = await orgsRes.json();
-            if (Array.isArray(orgs) && orgs.length > 0) {
-              const orgId = orgs[0].uuid;
-              const usageRes = await fetchFn(`https://claude.ai/api/organizations/${orgId}/usage`, { headers });
-              if (usageRes.ok) {
-                usageData = await usageRes.json();
-              }
-            }
-          }
-        } catch (e) {}
       }
 
       let percentUsed = 0;
@@ -218,7 +236,6 @@ class ClaudeProvider {
       let detail = 'Claude Pro / Free (Active)';
 
       if (usageData) {
-        console.log('[ClaudeProvider] Usage payload:', JSON.stringify(usageData));
         this.cachedUsage = usageData;
 
         let fiveHour = usageData.five_hour || usageData.session || {};
@@ -304,6 +321,7 @@ class ClaudeProvider {
           const currentSession = secureStore.getSession('claude') || {};
           secureStore.saveSession('claude', {
             ...currentSession,
+            orgId: this.orgId || currentSession.orgId || null,
             lastUsage: usageData
           });
         } catch (e) {}
@@ -344,11 +362,9 @@ class ClaudeProvider {
   }
 
   async logout() {
+    this.orgId = null;
+    this.cachedUsage = null;
     try {
-      if (this.bgWindow && !this.bgWindow.isDestroyed()) {
-        this.bgWindow.close();
-        this.bgWindow = null;
-      }
       const ses = this.getSession();
       await ses.clearStorageData();
     } catch (e) {}

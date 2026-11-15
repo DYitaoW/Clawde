@@ -1,4 +1,4 @@
-const { app } = require('electron');
+const { app, safeStorage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -9,14 +9,54 @@ class SecureStore {
       ? app.getPath('userData')
       : path.join(os.homedir(), '.UsageMonitor');
     this.storePath = path.join(userDataPath, 'user_state.json');
+    // Session cookies are encrypted at rest with safeStorage (macOS Keychain).
+    // safeStorage is only reliable after app 'ready', so decryption is lazy.
+    this._encryptedSessions = null; // base64 blob not yet decrypted
+    this._needsEncryption = false;  // legacy plaintext sessions to migrate
     this.data = this._load();
+  }
+
+  _canEncrypt() {
+    try {
+      return app.isReady() && safeStorage.isEncryptionAvailable();
+    } catch {
+      return false;
+    }
+  }
+
+  // Decrypts sessions on first access (after app ready)
+  _ensureSessions() {
+    if (this._encryptedSessions && this._canEncrypt()) {
+      try {
+        const json = safeStorage.decryptString(Buffer.from(this._encryptedSessions, 'base64'));
+        this.data.sessions = JSON.parse(json);
+      } catch (err) {
+        // Keychain key changed (e.g. different build) - user just signs in again
+        console.warn('[SecureStore] Could not decrypt saved sessions:', err.message);
+        this.data.sessions = {};
+      }
+      this._encryptedSessions = null;
+    }
+    if (!this.data.sessions) this.data.sessions = {};
+    if (this._needsEncryption && this._canEncrypt()) {
+      this._needsEncryption = false;
+      this._save(); // migrate legacy plaintext sessions to encrypted storage
+    }
   }
 
   _load() {
     try {
       if (fs.existsSync(this.storePath)) {
         const raw = fs.readFileSync(this.storePath, 'utf8');
-        return JSON.parse(raw);
+        const data = JSON.parse(raw);
+        if (typeof data.sessionsEncrypted === 'string') {
+          this._encryptedSessions = data.sessionsEncrypted;
+          delete data.sessionsEncrypted;
+          data.sessions = {};
+        } else if (data.sessions && Object.keys(data.sessions).length > 0) {
+          this._needsEncryption = true;
+        }
+        return data;
       }
     } catch (err) {
       console.error('[SecureStore] Load error:', err.message);
@@ -38,7 +78,20 @@ class SecureStore {
   _save() {
     try {
       fs.mkdirSync(path.dirname(this.storePath), { recursive: true });
-      fs.writeFileSync(this.storePath, JSON.stringify(this.data, null, 2), 'utf8');
+      const { sessions, ...rest } = this.data;
+      const out = { ...rest };
+      if (this._encryptedSessions) {
+        // Not decrypted yet: keep the existing encrypted blob untouched
+        out.sessionsEncrypted = this._encryptedSessions;
+      } else if (this._canEncrypt()) {
+        out.sessionsEncrypted = safeStorage.encryptString(JSON.stringify(sessions || {})).toString('base64');
+      } else {
+        // Before app ready / no Keychain: keep plaintext and encrypt on the next save
+        out.sessions = sessions || {};
+        if (sessions && Object.keys(sessions).length > 0) this._needsEncryption = true;
+      }
+      fs.writeFileSync(this.storePath, JSON.stringify(out, null, 2), { encoding: 'utf8', mode: 0o600 });
+      fs.chmodSync(this.storePath, 0o600); // owner-only, also for files created by older versions
     } catch (err) {
       console.error('[SecureStore] Save error:', err.message);
     }
@@ -60,7 +113,7 @@ class SecureStore {
   }
 
   saveSession(provider, sessionData) {
-    if (!this.data.sessions) this.data.sessions = {};
+    this._ensureSessions();
     this.data.sessions[provider] = {
       data: sessionData,
       updatedAt: new Date().toISOString()
@@ -70,12 +123,14 @@ class SecureStore {
   }
 
   getSession(provider) {
-    if (!this.data.sessions || !this.data.sessions[provider]) return null;
+    this._ensureSessions();
+    if (!this.data.sessions[provider]) return null;
     return this.data.sessions[provider].data;
   }
 
   clearSession(provider) {
-    if (this.data.sessions && this.data.sessions[provider]) {
+    this._ensureSessions();
+    if (this.data.sessions[provider]) {
       delete this.data.sessions[provider];
     }
     this.setProviderLoggedIn(provider, false);
@@ -91,6 +146,8 @@ class SecureStore {
       systemStatsEnabled: true,
       refreshButtonEnabled: true,
       trayWeeklyRing: true,
+      pacingEnabled: true,
+      theme: 'system',
       ...this.data.settings
     };
   }

@@ -1,8 +1,10 @@
 :root {
+  --ink-rgb: 255, 255, 255;  /* overlays/borders: white on dark, black on light */
+  color-scheme: dark;
   --bg-color: #131418;
-  --card-bg: rgba(255, 255, 255, 0.035);
-  --card-border: rgba(255, 255, 255, 0.075);
-  --card-border-hover: rgba(255, 255, 255, 0.14);
+  --card-bg: rgba(var(--ink-rgb), 0.035);
+  --card-border: rgba(var(--ink-rgb), 0.075);
+  --card-border-hover: rgba(var(--ink-rgb), 0.14);
   --text-primary: #f3f4f6;
   --text-secondary: #9ca3af;
   --text-tertiary: #6b7280;
@@ -13,8 +15,28 @@
   --success-color: #34d399;
   --warning-color: #fbbf24;
   --danger-color: #f87171;
-  --btn-hover: rgba(255, 255, 255, 0.08);
+  --btn-hover: rgba(var(--ink-rgb), 0.08);
   --font-stack: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+/* Light theme (Settings → Appearance, or System when macOS is light) */
+:root[data-theme="light"] {
+  color-scheme: light;
+  --ink-rgb: 0, 0, 0;
+  --bg-color: #f4f4f6;
+  --card-bg: #ffffff;
+  --card-border: rgba(0, 0, 0, 0.08);
+  --card-border-hover: rgba(0, 0, 0, 0.16);
+  --text-primary: #1c2541;
+  --text-secondary: #4b5563;
+  --text-tertiary: #8a8f98;
+  --antigravity-accent: #3b7ddd;
+  --claude-weekly: #db2777;
+  --antigravity-weekly: #7c3aed;
+  --success-color: #059669;
+  --warning-color: #d97706;
+  --danger-color: #dc2626;
+  --btn-hover: rgba(0, 0, 0, 0.06);
 }
 
 * {
@@ -48,7 +70,7 @@ body {
   justify-content: space-between;
   align-items: center;
   padding-bottom: 8px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  border-bottom: 1px solid rgba(var(--ink-rgb), 0.06);
   margin-bottom: 10px;
 }
 
@@ -114,7 +136,7 @@ body {
 
 .provider-card:hover {
   border-color: var(--card-border-hover);
-  background: rgba(255, 255, 255, 0.045);
+  background: rgba(var(--ink-rgb), 0.045);
 }
 
 .card-header {
@@ -216,12 +238,12 @@ body {
 
 .circle-track {
   fill: none;
-  stroke: rgba(255, 255, 255, 0.08);
+  stroke: rgba(var(--ink-rgb), 0.08);
   stroke-width: 4.5;
 }
 
 .circle-track.inner {
-  stroke: rgba(255, 255, 255, 0.06);
+  stroke: rgba(var(--ink-rgb), 0.06);
   stroke-width: 3.5;
 }
 
@@ -285,7 +307,7 @@ body {
   font-size: 17px;
   font-weight: 600;
   letter-spacing: -0.3px;
-  color: #ffffff;
+  color: var(--text-primary);
   line-height: 1;
   transition: color 0.2s ease;
 }
@@ -339,7 +361,7 @@ body {
   margin-left: 6px;
   font-size: 12px;
   font-weight: 600;
-  color: #ffffff;
+  color: var(--text-primary);
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.2px;
   line-height: 1.25;
@@ -360,7 +382,7 @@ body {
   font-size: 11px;
   white-space: nowrap;
   font-weight: 400;
-  color: #9ca3af;
+  color: var(--text-secondary);
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.1px;
   line-height: 1.25;
@@ -411,8 +433,8 @@ body {
 
 .manual-code-input {
   flex: 1;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(var(--ink-rgb), 0.05);
+  border: 1px solid rgba(var(--ink-rgb), 0.12);
   border-radius: 5px;
   padding: 4px 7px;
   font-size: 10px;
@@ -441,8 +463,8 @@ body {
 }
 
 .login-btn {
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(var(--ink-rgb), 0.1);
+  background: rgba(var(--ink-rgb), 0.05);
   color: var(--text-primary);
   border-radius: 6px;
   padding: 6px 10px;
@@ -458,8 +480,8 @@ body {
 }
 
 .login-btn:hover {
-  background: rgba(255, 255, 255, 0.09);
-  border-color: rgba(255, 255, 255, 0.18);
+  background: rgba(var(--ink-rgb), 0.09);
+  border-color: rgba(var(--ink-rgb), 0.18);
 }
 
 .login-btn-claude:hover {
@@ -477,7 +499,7 @@ body {
   align-items: center;
   padding-top: 8px;
   padding-bottom: 0;
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  border-top: 1px solid rgba(var(--ink-rgb), 0.06);
   margin-top: 10px;
   flex-shrink: 0;
 }
@@ -533,7 +555,7 @@ body {
 }
 
 .settings-row + .settings-row {
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  border-top: 1px solid rgba(var(--ink-rgb), 0.06);
 }
 
 .settings-row-info {
@@ -566,8 +588,8 @@ body {
 
 .settings-action-btn {
   flex-shrink: 0;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(var(--ink-rgb), 0.05);
+  border: 1px solid rgba(var(--ink-rgb), 0.1);
   color: var(--text-primary);
   border-radius: 6px;
   padding: 4px 10px;
@@ -578,8 +600,8 @@ body {
 }
 
 .settings-action-btn:hover {
-  background: rgba(255, 255, 255, 0.09);
-  border-color: rgba(255, 255, 255, 0.18);
+  background: rgba(var(--ink-rgb), 0.09);
+  border-color: rgba(var(--ink-rgb), 0.18);
 }
 
 .settings-action-btn.danger {
@@ -624,8 +646,8 @@ body {
   font-weight: 600;
   padding: 1.5px 5.5px;
   border-radius: 4px;
-  background: rgba(255, 255, 255, 0.06);
-  color: #9ca3af;
+  background: rgba(var(--ink-rgb), 0.06);
+  color: var(--text-secondary);
   letter-spacing: -0.1px;
   font-variant-numeric: tabular-nums;
   display: inline-flex;
@@ -635,16 +657,16 @@ body {
 
 .burn-rate-badge.moderate {
   background: rgba(251, 191, 36, 0.14);
-  color: #fbbf24;
+  color: var(--warning-color);
 }
 
 .burn-rate-badge.fast {
   background: rgba(248, 113, 113, 0.18);
-  color: #f87171;
+  color: var(--danger-color);
 }
 
 .burn-rate-badge.idle {
-  color: #6b7280;
+  color: var(--text-tertiary);
 }
 
 /* Toggle Switch */
@@ -666,7 +688,7 @@ body {
   position: absolute;
   cursor: pointer;
   top: 0; left: 0; right: 0; bottom: 0;
-  background-color: rgba(255, 255, 255, 0.14);
+  background-color: rgba(var(--ink-rgb), 0.14);
   transition: 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   border-radius: 18px;
 }
@@ -699,8 +721,8 @@ input:checked + .slider:before {
 
 .threshold-input {
   width: 44px;
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(var(--ink-rgb), 0.06);
+  border: 1px solid rgba(var(--ink-rgb), 0.12);
   border-radius: 5px;
   color: var(--text-primary);
   font-size: 11px;
@@ -725,6 +747,12 @@ input:checked + .slider:before {
 .timestamp {
   font-size: 10px;
   color: var(--text-tertiary);
+  /* Fixed-width slot + equal-width digits so the refresh button never shifts
+     as the countdown changes ("Next update in 4m 59s" is the longest text) */
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  width: 11.5em;
+  flex-shrink: 0;
 }
 
 .text-btn {
@@ -832,4 +860,99 @@ input:checked + .slider:before {
 .threshold-input {
   -moz-appearance: textfield;
   appearance: textfield;
+}
+
+/* Footer right: update pill + settings */
+.footer-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.update-pill {
+  background: rgba(52, 211, 153, 0.14);
+  border: 1px solid rgba(52, 211, 153, 0.35);
+  color: var(--success-color);
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.update-pill:hover {
+  background: rgba(52, 211, 153, 0.24);
+}
+
+/* Header brand: logo + name */
+.app-logo {
+  width: 18px;
+  height: 18px;
+  display: block;
+  flex-shrink: 0;
+}
+
+:root[data-theme="light"] .app-logo.logo-dark,
+:root:not([data-theme="light"]) .app-logo.logo-light {
+  display: none;
+}
+
+/* Placeholder until a dedicated dark-mode logo is added: render the light logo near-white */
+.app-logo.logo-dark.placeholder {
+  filter: brightness(0) invert(0.93);
+}
+
+/* Appearance segmented control */
+.segmented {
+  display: inline-flex;
+  flex-shrink: 0;
+  background: rgba(var(--ink-rgb), 0.06);
+  border: 1px solid rgba(var(--ink-rgb), 0.08);
+  border-radius: 7px;
+  padding: 2px;
+  gap: 2px;
+}
+
+.segmented button {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: 10.5px;
+  font-weight: 500;
+  padding: 3px 8px;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.segmented button:hover {
+  color: var(--text-primary);
+}
+
+.segmented button.active {
+  background: var(--card-bg);
+  color: var(--text-primary);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+}
+
+:root:not([data-theme="light"]) .segmented button.active {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+/* Settings: two columns (Accounts + About | Preferences) in a wider popover */
+.settings-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  column-gap: 12px;
+  align-items: start;
+}
+
+.settings-col {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
 }

@@ -32,11 +32,25 @@ const COLORS = {
   antigravityWeekly: '#8b5cf6',
   warning: '#fbbf24',
   critical: '#f87171',
-  track: 'rgba(255, 255, 255, 0.22)',
-  label: 'rgba(255, 255, 255, 0.95)',
-  labelInactive: 'rgba(255, 255, 255, 0.5)',
-  logo: 'rgba(255, 255, 255, 0.9)'
+  // Monochrome parts (text, tracks, logos) are set per menu bar appearance in applyAppearance()
+  ink: '255, 255, 255',
+  track: '',
+  label: '',
+  labelInactive: '',
+  logo: ''
 };
+
+// Light menu bar: dark ink + deeper weekly tints so pale colors stay visible
+function applyAppearance(dark) {
+  COLORS.ink = dark ? '255, 255, 255' : '0, 0, 0';
+  COLORS.track = `rgba(${COLORS.ink}, 0.22)`;
+  COLORS.label = `rgba(${COLORS.ink}, ${dark ? 0.95 : 0.85})`;
+  COLORS.labelInactive = `rgba(${COLORS.ink}, ${dark ? 0.5 : 0.4})`;
+  COLORS.logo = `rgba(${COLORS.ink}, ${dark ? 0.9 : 0.8})`;
+  COLORS.claudeWeekly = dark ? '#fbcfe8' : '#db2777';
+  COLORS.antigravityWeekly = dark ? '#8b5cf6' : '#7c3aed';
+}
+applyAppearance(true);
 
 function statusColor(base, percent) {
   if (percent >= 90) return COLORS.critical;
@@ -76,7 +90,7 @@ function drawText(ctx, m, str, rightX, color) {
 
 function drawRing(ctx, cx, r, strokeW, percent, active, color, trackAlpha = 0.22) {
   ctx.lineWidth = strokeW;
-  ctx.strokeStyle = `rgba(255, 255, 255, ${trackAlpha})`;
+  ctx.strokeStyle = `rgba(${COLORS.ink}, ${trackAlpha})`;
   ctx.beginPath();
   ctx.arc(cx, CENTER_Y, r, 0, Math.PI * 2);
   ctx.stroke();
@@ -124,7 +138,8 @@ function drawSparkleLogo(ctx, cx) {
 }
 
 // providers: [{ active, sessionPercent, weeklyPercent, showWeekly, base: 'claude' | 'antigravity' }]
-function renderTrayIcon(providers) {
+function renderTrayIcon(providers, options = {}) {
+  applyAppearance(options.dark !== false);
   const canvas = document.createElement('canvas');
   const measureCtx = canvas.getContext('2d');
   const m = makeMetrics(measureCtx);
