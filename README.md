@@ -24,8 +24,7 @@ A small macOS menu bar app that shows how much of your **Claude** and **Google A
 
 1. Download the latest `Clawde-x.y.z-arm64.dmg` from [Releases](https://github.com/DYitaoW/clawde/releases/latest).
 2. Open the DMG and drag **Clawde** into **Applications**.
-3. Open Clawde. It's signed and notarized by Apple, so it opens like any other app.
-4. Clawde appears in the menu bar (there's no Dock icon). Click it and sign in to Claude and/or Antigravity.
+3. Clawde appears in the menu bar (there's no Dock icon). Click it and sign in to Claude and/or Antigravity.
 
 ## Updating
 
