@@ -414,7 +414,7 @@ body {
   width: 100%;
 }
 
-.paste-code-link {
+.text-link-btn {
   background: none;
   border: none;
   color: var(--text-tertiary);
@@ -426,46 +426,8 @@ body {
   align-self: center;
 }
 
-.paste-code-link:hover {
+.text-link-btn:hover {
   color: var(--antigravity-accent);
-}
-
-.manual-code-box {
-  display: flex;
-  gap: 4px;
-  width: 100%;
-  margin-top: 2px;
-}
-
-.manual-code-input {
-  flex: 1;
-  background: rgba(var(--ink-rgb), 0.05);
-  border: 1px solid rgba(var(--ink-rgb), 0.12);
-  border-radius: 5px;
-  padding: 4px 7px;
-  font-size: 10px;
-  color: var(--text-primary);
-  outline: none;
-}
-
-.manual-code-input:focus {
-  border-color: var(--antigravity-accent);
-}
-
-.manual-code-submit {
-  background: rgba(138, 180, 248, 0.15);
-  border: 1px solid rgba(138, 180, 248, 0.3);
-  color: var(--antigravity-accent);
-  border-radius: 5px;
-  padding: 4px 8px;
-  font-size: 10px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: background 0.15s ease;
-}
-
-.manual-code-submit:hover {
-  background: rgba(138, 180, 248, 0.3);
 }
 
 .login-btn {

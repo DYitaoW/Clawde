@@ -104,6 +104,9 @@ class SecureStore {
 
   setProviderLoggedIn(provider, loggedIn, meta = {}) {
     if (!this.data.providers) this.data.providers = {};
+    // Called on every poll: skip the disk write + Keychain encryption when nothing changed
+    const current = this.data.providers[provider];
+    if (current && current.loggedIn === loggedIn && Object.keys(meta).length === 0) return;
     this.data.providers[provider] = {
       loggedIn,
       lastLogin: loggedIn ? new Date().toISOString() : null,

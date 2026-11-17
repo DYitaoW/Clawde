@@ -223,26 +223,27 @@ function renderProviderCard(provider, data) {
   }
 
   if (!data || !data.loggedIn) {
+    // Antigravity has no sign-in: it's read from the running Antigravity app
+    if (!isClaude) {
+      badgeEl.innerHTML = `<span class="badge-tag disconnected">Not running</span>`;
+      contentEl.innerHTML = `
+        <div class="unauth-state">
+          <span class="unauth-note">Open Antigravity to start tracking. It's detected automatically.</span>
+          <button class="text-link-btn" onclick="handleRefresh()">Check again</button>
+        </div>
+      `;
+      return;
+    }
+
     badgeEl.innerHTML = `<span class="badge-tag disconnected">Disconnected</span>`;
-
-    const loginBtnText = isClaude ? 'Sign in to Claude' : 'Connect Antigravity';
-    const manualPromptHtml = !isClaude ? `
-      <div id="antigravity-manual-prompt" class="manual-code-box" style="display: none;">
-        <input type="text" id="antigravity-code-input" class="manual-code-input" placeholder="Paste callback URL or code..." />
-        <button class="manual-code-submit" onclick="submitAntigravityManualCode()">OK</button>
-      </div>
-      <button class="paste-code-link" onclick="toggleAntigravityManualPrompt()">Paste callback URL</button>
-    ` : '';
-
     contentEl.innerHTML = `
       <div class="unauth-state">
-        <button class="login-btn ${isClaude ? 'login-btn-claude' : 'login-btn-antigravity'}" onclick="handleLogin('${provider}')">
-          <span>${loginBtnText}</span>
+        <button class="login-btn login-btn-claude" onclick="handleLogin('${provider}')">
+          <span>Sign in to Claude</span>
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
             <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14L21 3"/>
           </svg>
         </button>
-        ${manualPromptHtml}
       </div>
     `;
     return;
@@ -263,7 +264,7 @@ function renderProviderCard(provider, data) {
   // Top-right: pacing normally; "Updated 12m ago" when showing last known numbers
   const staleBadgeHtml = data.stale ? `
     <span class="stale-badge" data-updated-at="${data.updatedAt || ''}"
-      title="Couldn't reach ${PROVIDER_NAMES[provider]}. Showing the last known numbers.">
+      title="${isClaude ? "Couldn't reach Claude" : "Antigravity isn't running"}. Showing the last known numbers.">
       <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
         <circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>
       </svg>${staleLabel(data.updatedAt)}</span>` : '';
@@ -305,7 +306,7 @@ function renderProviderCard(provider, data) {
         <span class="metric-compact-time">${weeklyResetDisplay}</span>
       </div>
     </div>
-    ${data.needsReauth ? reauthBarHtml(provider) : ''}
+    ${data.needsReauth && isClaude ? reauthBarHtml(provider) : ''}
     ${historyEnabled ? renderHistoryChart(provider, data.history) : ''}
   `;
   attachHistoryHover(contentEl);
@@ -388,43 +389,6 @@ async function handleLogin(provider) {
   }
 }
 
-function toggleAntigravityManualPrompt() {
-  const box = document.getElementById('antigravity-manual-prompt');
-  if (box) {
-    box.style.display = box.style.display === 'none' ? 'flex' : 'none';
-    if (box.style.display === 'flex') {
-      const input = document.getElementById('antigravity-code-input');
-      if (input) input.focus();
-    }
-  }
-}
-
-async function submitAntigravityManualCode() {
-  const input = document.getElementById('antigravity-code-input');
-  if (!input || !input.value.trim()) return;
-
-  if (antigravityBadge) antigravityBadge.innerHTML = `<span class="badge-tag connecting">Connecting...</span>`;
-
-  try {
-    const res = await window.api.submitAntigravityCode(input.value.trim());
-    if (res && res.success) {
-      if (res.usage) {
-        updateUI(res.usage);
-      } else {
-        const data = await window.api.getUsage();
-        updateUI(data);
-      }
-    } else {
-      alert(`Connection error: ${res.error || 'Failed to exchange code'}`);
-      const data = await window.api.getUsage();
-      updateUI(data);
-    }
-  } catch (e) {
-    console.error('Manual code exchange error:', e);
-  } finally {
-  }
-}
-
 async function handleLogout(provider) {
   try {
     const updated = await window.api.logout(provider);
@@ -463,6 +427,17 @@ async function renderSettings() {
     const connected = Boolean(item && item.loggedIn);
     const statusEl = document.getElementById(`settings-${provider}-status`);
     const btn = document.getElementById(`settings-${provider}-btn`);
+    if (provider === 'antigravity') {
+      // Detected from the running app: nothing to connect or disconnect
+      const running = connected && !item.stale;
+      if (statusEl) {
+        statusEl.textContent = running ? 'Detected automatically'
+          : connected ? 'Not running (showing last numbers)' : 'Open Antigravity to connect';
+        statusEl.classList.toggle('connected', running);
+      }
+      if (btn) btn.hidden = true;
+      continue;
+    }
     if (statusEl) {
       statusEl.textContent = connected ? 'Connected' : 'Not connected';
       statusEl.classList.toggle('connected', connected);
@@ -571,7 +546,6 @@ refreshBtn.addEventListener('click', handleRefresh);
 settingsBtn.addEventListener('click', () => showSettings(settingsView.hidden));
 settingsBackBtn.addEventListener('click', () => showSettings(false));
 document.getElementById('settings-claude-btn').addEventListener('click', () => handleSettingsAction('claude'));
-document.getElementById('settings-antigravity-btn').addEventListener('click', () => handleSettingsAction('antigravity'));
 quitBtn.addEventListener('click', () => {
   window.api.quit();
 });

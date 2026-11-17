@@ -18,6 +18,17 @@ function formatResetRemaining(diffMs) {
   return `Resets in ${parts.join(' ')}`;
 }
 
+// claude.ai reports utilization as a percentage (0-100), e.g. 1.0 means 1%.
+// Never treat values <= 1 as fractions: 1% right after a window starts would
+// otherwise show (and notify) as 100%.
+function usedPercent(limit) {
+  const raw = [limit.utilization, limit.percent_used, limit.percent]
+    .find(v => v !== undefined && v !== null);
+  const n = Number(raw);
+  if (raw === undefined || !Number.isFinite(n)) return 0;
+  return Math.max(0, Math.min(100, Math.round(n)));
+}
+
 class ClaudeProvider {
   constructor() {
     this.name = 'Claude';
@@ -244,6 +255,7 @@ class ClaudeProvider {
       let windowResetInText = 'Full Quota Available';
       let weeklyResetInText = 'Full Quota Available';
       let resetInText = 'Full Quota Available';
+      let windowResetsAt = null; // ms timestamp of the 5h window's reset, if known
       let detail = 'Claude Pro / Free (Active)';
 
       if (usageData) {
@@ -263,23 +275,8 @@ class ClaudeProvider {
           }
         }
 
-        if (fiveHour.utilization !== undefined && fiveHour.utilization !== null) {
-          const val = Number(fiveHour.utilization);
-          fiveHourPercent = Math.round(val <= 1.0 && val > 0 ? val * 100 : val);
-        } else if (fiveHour.percent_used !== undefined) {
-          fiveHourPercent = Math.round(Number(fiveHour.percent_used));
-        } else if (fiveHour.percent !== undefined) {
-          fiveHourPercent = Math.round(Number(fiveHour.percent));
-        }
-
-        if (sevenDay.utilization !== undefined && sevenDay.utilization !== null) {
-          const val = Number(sevenDay.utilization);
-          sevenDayPercent = Math.round(val <= 1.0 && val > 0 ? val * 100 : val);
-        } else if (sevenDay.percent_used !== undefined) {
-          sevenDayPercent = Math.round(Number(sevenDay.percent_used));
-        } else if (sevenDay.percent !== undefined) {
-          sevenDayPercent = Math.round(Number(sevenDay.percent));
-        }
+        fiveHourPercent = usedPercent(fiveHour);
+        sevenDayPercent = usedPercent(sevenDay);
 
         percentUsed = fiveHourPercent;
 
@@ -288,6 +285,7 @@ class ClaudeProvider {
           const diffMs = new Date(fiveHourReset).getTime() - Date.now();
           if (diffMs > 0) {
             windowResetInText = formatResetRemaining(diffMs);
+            windowResetsAt = Date.now() + diffMs;
           } else if (diffMs >= -120000) {
             windowResetInText = 'Resetting shortly';
           } else {
@@ -353,6 +351,7 @@ class ClaudeProvider {
         windowResetInText,
         weeklyResetInText,
         resetInText,
+        windowResetsAt,
         status,
         detail,
         hasData: Boolean(usageData),

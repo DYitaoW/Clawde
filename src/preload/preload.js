@@ -4,7 +4,6 @@ contextBridge.exposeInMainWorld('api', {
   getUsage: () => ipcRenderer.invoke('get-usage'),
   refresh: () => ipcRenderer.invoke('refresh-usage'),
   login: (provider) => ipcRenderer.invoke('log-in', provider),
-  submitAntigravityCode: (code) => ipcRenderer.invoke('antigravity-submit-code', code),
   logout: (provider) => ipcRenderer.invoke('log-out', provider),
   quit: () => ipcRenderer.invoke('quit-app'),
   resizePopover: (height, width) => ipcRenderer.invoke('resize-popover', height, width),

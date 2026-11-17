@@ -1,13 +1,14 @@
 {
   "name": "clawde",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Clawde: macOS menu bar monitor for Claude and Antigravity usage limits",
   "main": "src/main/index.js",
   "scripts": {
     "start": "electron .",
     "pack": "electron-builder --dir",
     "dist": "npm run build:dmg",
-    "build:dmg": "node scripts/check-signing.js && electron-builder --mac --arm64"
+    "build:dmg": "node scripts/build.js",
+    "release": "node scripts/build.js --publish"
   },
   "keywords": [
     "claude",

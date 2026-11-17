@@ -1,4 +1,4 @@
-const { app, ipcMain, Notification, shell } = require('electron');
+const { app, ipcMain, Notification, shell, powerMonitor } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
@@ -91,6 +91,11 @@ function computeBurnRate(provider, currentPercent) {
   return { ratePerHour, text: `+${ratePerHour}%/h`, status };
 }
 
+// "Resets in 2h 13m" / "Resetting shortly" as-is; anything else becomes "Resets soon"
+function resetPhrase(text) {
+  return typeof text === 'string' && /^Reset/.test(text) ? text : 'Resets soon';
+}
+
 function checkAndNotifyUsage(items) {
   try {
     const settings = secureStore.getSettings();
@@ -109,7 +114,7 @@ function checkAndNotifyUsage(items) {
           notifiedState[provider] = true;
           const notification = new Notification({
             title: `⚠️ ${item.name} Quota Alert (${pct}%)`,
-            body: `${item.name} usage reached ${pct}% (threshold: ${threshold}%). Reset in ${item.windowResetInText || 'soon'}.`,
+            body: `${item.name} usage reached ${pct}% (threshold: ${threshold}%). ${resetPhrase(item.windowResetInText)}.`,
             silent: false
           });
           notification.show();
@@ -124,8 +129,8 @@ function checkAndNotifyUsage(items) {
   }
 }
 
-// "Session reset" alert: last fresh session % per provider
-const lastSessionPercent = {};
+// "Session reset" alert: last fresh reading per provider { pct, resetsAt }
+const lastSessionReading = {};
 const RESET_FROM_PERCENT = 20; // only worth an alert if the window was actually in use
 const RESET_TO_PERCENT = 5;
 
@@ -135,11 +140,17 @@ function checkResetNotifications(items) {
     for (const item of items) {
       if (!item || !item.loggedIn || item.stale) continue;
       const pct = typeof item.windowPercent === 'number' ? item.windowPercent : item.percentUsed;
-      const prev = lastSessionPercent[item.provider];
-      lastSessionPercent[item.provider] = pct;
+      const resetsAt = typeof item.windowResetsAt === 'number' ? item.windowResetsAt : null;
+      const prev = lastSessionReading[item.provider];
+      lastSessionReading[item.provider] = { pct, resetsAt };
       if (settings.resetAlertsEnabled === false) continue;
       if (!Notification || !Notification.isSupported()) continue;
-      if (typeof prev === 'number' && prev >= RESET_FROM_PERCENT && pct <= RESET_TO_PERCENT) {
+      if (!prev || prev.pct < RESET_FROM_PERCENT || pct > RESET_TO_PERCENT) continue;
+      // A real reset starts a new window. If both readings point at the same,
+      // still-future reset time, the high reading was a glitch, not a reset.
+      const sameWindow = prev.resetsAt && resetsAt && prev.resetsAt > Date.now() &&
+        Math.abs(prev.resetsAt - resetsAt) < 5 * 60 * 1000;
+      if (!sameWindow) {
         new Notification({
           title: `${item.name} session reset`,
           body: `Your 5-hour ${item.name} limit has reset. Full quota available.`,
@@ -156,7 +167,22 @@ if (process.platform === 'darwin') {
   app.dock.hide();
 }
 
-async function collectAllUsage() {
+// Popover opens, the timer, wake-from-sleep and manual refreshes can overlap:
+// share one in-flight refresh instead of fetching (and notifying) twice.
+let inFlightRefresh = null;
+
+// fresh: wait out a refresh that started before a login/logout, then fetch again
+function collectAllUsage({ fresh = false } = {}) {
+  if (inFlightRefresh && fresh) {
+    return inFlightRefresh.catch(() => {}).then(() => collectAllUsage());
+  }
+  if (!inFlightRefresh) {
+    inFlightRefresh = doCollectAllUsage().finally(() => { inFlightRefresh = null; });
+  }
+  return inFlightRefresh;
+}
+
+async function doCollectAllUsage() {
   const [claudeResult, antigravityResult] = await Promise.allSettled([
     claudeProvider.fetchUsage(),
     antigravityProvider.fetchUsage()
@@ -223,8 +249,19 @@ function startPolling() {
   if (refreshTimer) clearInterval(refreshTimer);
   const minutes = secureStore.getSettings().refreshIntervalMinutes || 5;
   refreshTimer = setInterval(() => {
-    collectAllUsage();
+    collectAllUsage().catch(() => {});
   }, minutes * 60 * 1000);
+}
+
+// After sleep / unlock, refresh soon instead of showing data up to one interval old.
+// The short delay gives Wi-Fi time to reconnect.
+let wakeRefreshTimer = null;
+function refreshAfterWake() {
+  clearTimeout(wakeRefreshTimer);
+  wakeRefreshTimer = setTimeout(() => {
+    collectAllUsage().catch(() => {});
+    startPolling(); // restart the interval so it doesn't fire right after
+  }, 5000);
 }
 
 app.whenReady().then(async () => {
@@ -247,6 +284,9 @@ app.whenReady().then(async () => {
 
   await collectAllUsage();
   startPolling();
+
+  powerMonitor.on('resume', refreshAfterWake);
+  powerMonitor.on('unlock-screen', refreshAfterWake);
 });
 
 // IPC Handlers
@@ -263,41 +303,21 @@ ipcMain.handle('refresh-usage', async () => {
   return await collectAllUsage();
 });
 
-// Provider login
+// Provider login (Claude only: Antigravity is detected from the running app)
 ipcMain.handle('log-in', async (_event, provider) => {
+  if (provider !== 'claude') return { success: false };
   return new Promise((resolve) => {
-    if (provider === 'antigravity') {
-      antigravityProvider.startOAuthLogin(
-        async () => {
-          const updated = await collectAllUsage();
-          resolve({ success: true, usage: updated });
-        },
-        () => {
-          resolve({ success: false });
-        }
-      );
-    } else {
-      openLogin(
-        provider,
-        async () => {
-          const updated = await collectAllUsage();
-          resolve({ success: true, usage: updated });
-        },
-        () => {
-          resolve({ success: false });
-        }
-      );
-    }
+    openLogin(
+      provider,
+      async () => {
+        const updated = await collectAllUsage({ fresh: true });
+        resolve({ success: true, usage: updated });
+      },
+      () => {
+        resolve({ success: false });
+      }
+    );
   });
-});
-
-ipcMain.handle('antigravity-submit-code', async (_event, code) => {
-  const res = await antigravityProvider.handleManualCode(code);
-  if (res && res.success) {
-    const updated = await collectAllUsage();
-    return { success: true, usage: updated };
-  }
-  return { success: false, error: (res && res.error) || 'Failed to exchange code' };
 });
 
 ipcMain.handle('log-out', async (_event, provider) => {
@@ -308,9 +328,9 @@ ipcMain.handle('log-out', async (_event, provider) => {
   }
   if (provider === 'claude' || provider === 'antigravity') {
     history.clear(provider);
-    delete lastSessionPercent[provider];
+    delete lastSessionReading[provider];
   }
-  return await collectAllUsage();
+  return await collectAllUsage({ fresh: true });
 });
 
 ipcMain.handle('get-settings', () => {

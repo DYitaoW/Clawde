@@ -1,20 +1,10 @@
 const http = require('http');
 const https = require('https');
-const crypto = require('crypto');
-const { shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const cp = require('child_process');
 const secureStore = require('../secureStore');
-
-// Google Cloud Code / Antigravity standard OAuth client ID
-const CLIENT_ID = '1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com';
-const OAUTH_SCOPES = [
-  'https://www.googleapis.com/auth/cloud-platform',
-  'https://www.googleapis.com/auth/userinfo.email',
-  'https://www.googleapis.com/auth/userinfo.profile'
-].join(' ');
 
 function formatResetRemaining(diffMs) {
   if (diffMs <= 0) return 'Resetting shortly';
@@ -35,17 +25,15 @@ class AntigravityProvider {
   constructor() {
     this.name = 'Antigravity';
     this.id = 'antigravity';
-    this.server = null;
     this.cachedUsage = null;
     this.activeServer = null; // Caches working local { port, token, isHttps }
-    this.pendingAuth = null;  // Caches PKCE { verifier, state, redirectUri }
   }
 
   // ==========================================
-  // Method 1: OpenUsage Remote Cloud Code API
+  // Method 1: Remote Cloud Code API
   // ==========================================
 
-  // Queries Cloud Code internal quota APIs using Google OAuth access token
+  // Queries Cloud Code internal quota APIs with an access token found in a local credential file
   async fetchRemoteQuota(accessToken) {
     if (!accessToken) return null;
 
@@ -64,7 +52,8 @@ class AntigravityProvider {
             'User-Agent': 'antigravity/hub/2.24.0 (aidev_client; os_type=darwin; arch=arm64; cl=1000335682)',
             'X-Goog-Api-Client': 'gl-node/18.0.0'
           },
-          body: JSON.stringify({})
+          body: JSON.stringify({}),
+          signal: AbortSignal.timeout(10000)
         });
 
         if (res.ok) {
@@ -81,33 +70,6 @@ class AntigravityProvider {
       } catch (err) {
         console.warn(`[AntigravityProvider] Remote fetch notice (${url}):`, err.message);
       }
-    }
-    return null;
-  }
-
-  // Refreshes expired Google OAuth access token using refresh_token
-  async refreshAccessToken(refreshToken) {
-    if (!refreshToken) return null;
-    try {
-      const res = await fetch('https://oauth2.googleapis.com/token', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-          client_id: CLIENT_ID,
-          refresh_token: refreshToken,
-          grant_type: 'refresh_token'
-        }).toString()
-      });
-
-      if (res.ok) {
-        const tokenData = await res.json();
-        return tokenData.access_token;
-      } else {
-        const err = await res.text().catch(() => '');
-        console.warn('[AntigravityProvider] Token refresh response error:', res.status, err);
-      }
-    } catch (e) {
-      console.warn('[AntigravityProvider] Token refresh error:', e.message);
     }
     return null;
   }
@@ -145,9 +107,37 @@ class AntigravityProvider {
   // Method 2: Local Language Server & Daemon
   // ==========================================
 
-  // Discover candidate (port, token) pairs from process table and environment
-  async findServerCandidates() {
+  // The agy hub writes ~/.gemini/antigravity/daemon/hub_<port>.json with its
+  // ports and CSRF token. The token is NOT on its command line, so this is the
+  // only way to find it, and both change every time the hub restarts.
+  getDaemonCandidates() {
+    const dir = path.join(os.homedir(), '.gemini', 'antigravity', 'daemon');
+    let files = [];
+    try {
+      files = fs.readdirSync(dir).filter(f => /^hub_\d+\.json$/.test(f));
+    } catch (e) {
+      return [];
+    }
+
     const candidates = [];
+    for (const f of files) {
+      try {
+        const info = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
+        if (!info || !info.csrfToken) continue;
+        // Skip files left behind by a hub that has since exited
+        if (info.pid) {
+          try { process.kill(info.pid, 0); } catch (e) { if (e.code === 'ESRCH') continue; }
+        }
+        if (info.httpsPort > 0) candidates.push({ port: info.httpsPort, token: info.csrfToken, isHttps: true, source: 'daemon' });
+        if (info.httpPort > 0) candidates.push({ port: info.httpPort, token: info.csrfToken, isHttps: false, source: 'daemon' });
+      } catch (e) {}
+    }
+    return candidates;
+  }
+
+  // Discover candidate (port, token) pairs from daemon files, process table and environment
+  async findServerCandidates() {
+    const candidates = this.getDaemonCandidates();
 
     // 1. Check environment variables
     if (process.env.ANTIGRAVITY_LS_ADDRESS && process.env.ANTIGRAVITY_CSRF_TOKEN) {
@@ -309,12 +299,15 @@ class AntigravityProvider {
           }
         }
       }
+      // Cached server stopped answering (hub restarted: new port and token)
+      this.activeServer = null;
     }
 
     const candidates = await this.findServerCandidates();
 
     for (const c of candidates) {
-      for (const isHttps of [true, false]) {
+      const schemes = typeof c.isHttps === 'boolean' ? [c.isHttps] : [true, false];
+      for (const isHttps of schemes) {
         for (const ep of endpoints) {
           for (const pl of payloads) {
             const res = await this.requestRpc(isHttps, c.port, ep, c.token, pl);
@@ -524,6 +517,7 @@ class AntigravityProvider {
         windowResetInText,
         weeklyResetInText,
         resetInText,
+        windowResetsAt: windowReset ? (Date.parse(windowReset) || null) : null,
         modelName: 'Gemini Quotas'
       };
     }
@@ -605,6 +599,7 @@ class AntigravityProvider {
           windowResetInText,
           weeklyResetInText,
           resetInText,
+          windowResetsAt: windowReset ? (Date.parse(windowReset) || null) : null,
           modelName: activeItem.label || activeItem.modelOrAlias || activeItem.name || 'Gemini Pro'
         };
       }
@@ -614,318 +609,54 @@ class AntigravityProvider {
   }
 
   // ==========================================
-  // Session & Authentication
+  // Session (auto-detected from the running Antigravity app, no sign-in)
   // ==========================================
   async restoreSession() {
-    try {
-      const savedSession = secureStore.getSession('antigravity');
-      if (savedSession && (savedSession.tokens || savedSession.connectedAt || savedSession.lastUsage)) {
-        return true;
-      }
-
-      const localCreds = this.getLocalTokenCandidates();
-      if (localCreds.length > 0) {
-        return true;
-      }
-    } catch (err) {
-      console.warn('[AntigravityProvider] Session restore warning:', err.message);
-    }
-    return false;
+    const saved = secureStore.getSession('antigravity');
+    return Boolean(saved && saved.lastUsage);
   }
 
-  async checkAuth() {
-    const savedSession = secureStore.getSession('antigravity');
-    if (savedSession && (savedSession.tokens || savedSession.connectedAt || savedSession.lastUsage)) {
-      return true;
-    }
-
-    const localCreds = this.getLocalTokenCandidates();
-    if (localCreds.length > 0) {
-      return true;
-    }
-
-    if (this.activeServer) return true;
-    return false;
-  }
-
-  // Browser redirect landing page HTML
-  renderBrowserHtml(isSuccess, message) {
-    const title = isSuccess ? 'Connected to Antigravity' : 'Connection Error';
-    const accentColor = isSuccess ? '#8ab4f8' : '#f87171';
-    const badgeText = isSuccess ? 'Google Antigravity' : 'Antigravity Auth';
-
-    return `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <title>${title}</title>
-  <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #131418; color: #ededed; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
-    .card { background: #1c1d22; border: 1px solid rgba(255,255,255,0.08); border-radius: 14px; padding: 36px 32px; text-align: center; max-width: 440px; box-shadow: 0 12px 32px rgba(0,0,0,0.6); }
-    h1 { font-size: 20px; font-weight: 600; margin-bottom: 10px; color: ${accentColor}; }
-    p { color: #9a9b9f; font-size: 14px; line-height: 1.6; margin: 0 0 16px 0; }
-    .badge { display: inline-block; background: rgba(138, 180, 248, 0.15); color: ${accentColor}; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; margin-bottom: 16px; }
-  </style>
-</head>
-<body>
-  <div class="card">
-    <div class="badge">${badgeText}</div>
-    <h1>${title}</h1>
-    <p>${message}</p>
-  </div>
-  ${isSuccess ? '<script>setTimeout(() => { try { window.close(); } catch(e){} }, 3000);</script>' : ''}
-</body>
-</html>`;
-  }
-
-  // ==========================================
-  // OAuth Login with PKCE via Default Browser
-  // ==========================================
-  startOAuthLogin(onSuccess, onFailure) {
-    if (this.server) {
-      try { this.server.close(); } catch (e) {}
-      this.server = null;
-    }
-
-    // 1. Generate PKCE code_verifier and code_challenge
-    const verifier = crypto.randomBytes(32).toString('base64url');
-    const challenge = crypto.createHash('sha256').update(verifier).digest('base64url');
-    const state = crypto.randomBytes(16).toString('hex');
-
-    const port = 51121;
-    const redirectUri = `http://localhost:${port}/oauth-callback`;
-
-    this.pendingAuth = {
-      verifier,
-      challenge,
-      state,
-      redirectUri,
-      port
+  toResult(u, extra) {
+    const percentUsed = u.percentUsed || 0;
+    return {
+      provider: 'antigravity',
+      name: 'Antigravity',
+      loggedIn: true,
+      percentUsed,
+      windowPercent: u.windowPercent !== undefined ? u.windowPercent : percentUsed,
+      weeklyPercent: u.weeklyPercent || 0,
+      windowResetInText: u.windowResetInText,
+      weeklyResetInText: u.weeklyResetInText,
+      resetInText: u.resetInText || 'Active',
+      windowResetsAt: u.windowResetsAt || null,
+      status: percentUsed >= 90 ? 'critical' : percentUsed >= 70 ? 'warning' : 'ok',
+      detail: u.detail || 'Antigravity Connected',
+      hasData: true,
+      needsReauth: false,
+      ...extra
     };
-
-    // 2. Local HTTP Server to capture OAuth redirect callback
-    this.server = http.createServer(async (req, res) => {
-      try {
-        const reqUrl = new URL(req.url, `http://localhost:${port}`);
-        if (reqUrl.pathname === '/oauth-callback') {
-          const code = reqUrl.searchParams.get('code');
-          const error = reqUrl.searchParams.get('error');
-
-          if (error) {
-            console.error('[AntigravityProvider] OAuth redirect returned error:', error);
-            res.writeHead(400, { 'Content-Type': 'text/html; charset=utf-8' });
-            res.end(this.renderBrowserHtml(false, `Google authentication error: ${error}`));
-            this.cleanupServer();
-            if (onFailure) onFailure('antigravity');
-            return;
-          }
-
-          if (code) {
-
-            let tokenData = null;
-            try {
-              const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                body: new URLSearchParams({
-                  client_id: CLIENT_ID,
-                  code: code,
-                  code_verifier: verifier,
-                  redirect_uri: redirectUri,
-                  grant_type: 'authorization_code'
-                }).toString()
-              });
-
-              if (tokenRes.ok) {
-                tokenData = await tokenRes.json();
-              } else {
-                const errText = await tokenRes.text().catch(() => '');
-                console.error('[AntigravityProvider] Token exchange failed with status', tokenRes.status, ':', errText);
-                res.writeHead(400, { 'Content-Type': 'text/html; charset=utf-8' });
-                res.end(this.renderBrowserHtml(false, `Token exchange failed: ${errText || 'Invalid code or verifier'}`));
-                this.cleanupServer();
-                if (onFailure) onFailure('antigravity');
-                return;
-              }
-            } catch (err) {
-              console.error('[AntigravityProvider] Token exchange network error:', err.message);
-              res.writeHead(500, { 'Content-Type': 'text/html; charset=utf-8' });
-              res.end(this.renderBrowserHtml(false, `Token exchange network error: ${err.message}`));
-              this.cleanupServer();
-              if (onFailure) onFailure('antigravity');
-              return;
-            }
-
-            // Save authenticated tokens in secure store
-            secureStore.saveSession('antigravity', {
-              tokens: tokenData,
-              connectedAt: new Date().toISOString()
-            });
-            secureStore.setProviderLoggedIn('antigravity', true);
-
-            // Fetch remote quotas immediately
-            if (tokenData && tokenData.access_token) {
-              try {
-                const remoteResult = await this.fetchRemoteQuota(tokenData.access_token);
-                if (remoteResult && !remoteResult.error) {
-                  this.cachedUsage = {
-                    percentUsed: remoteResult.percentUsed,
-                    windowPercent: remoteResult.windowPercent,
-                    weeklyPercent: remoteResult.weeklyPercent,
-                    windowResetInText: remoteResult.windowResetInText,
-                    weeklyResetInText: remoteResult.weeklyResetInText,
-                    resetInText: remoteResult.resetInText,
-                    detail: `${remoteResult.modelName} Active (Google Cloud)`
-                  };
-                  secureStore.saveSession('antigravity', {
-                    tokens: tokenData,
-                    connectedAt: new Date().toISOString(),
-                    lastUsage: this.cachedUsage
-                  });
-                }
-              } catch (e) {
-                console.warn('[AntigravityProvider] Immediate quota fetch notice:', e.message);
-              }
-            }
-
-            res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-            res.end(this.renderBrowserHtml(true, 'Your Antigravity authorization is complete. You can close this tab and return to <strong>UsageMonitor</strong>.'));
-
-            setTimeout(() => {
-              this.cleanupServer();
-              if (onSuccess) onSuccess('antigravity');
-            }, 600);
-
-          } else {
-            res.writeHead(400, { 'Content-Type': 'text/html; charset=utf-8' });
-            res.end(this.renderBrowserHtml(false, 'No authorization code found in the callback request.'));
-            this.cleanupServer();
-            if (onFailure) onFailure('antigravity');
-          }
-        } else {
-          res.writeHead(404);
-          res.end();
-        }
-      } catch (err) {
-        console.error('[AntigravityProvider] OAuth callback server exception:', err.message);
-      }
-    });
-
-    this.server.on('error', (err) => {
-      console.error('[AntigravityProvider] OAuth listener error:', err.message);
-      if (err.code === 'EADDRINUSE') {
-        console.warn(`[AntigravityProvider] Port ${port} is currently busy. Please close any conflicting processes or paste authorization code.`);
-      }
-      this.cleanupServer();
-      if (onFailure) onFailure('antigravity');
-    });
-
-    this.server.listen(port, '127.0.0.1', () => {
-
-      const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?` + new URLSearchParams({
-        client_id: CLIENT_ID,
-        redirect_uri: redirectUri,
-        response_type: 'code',
-        scope: OAUTH_SCOPES,
-        code_challenge: challenge,
-        code_challenge_method: 'S256',
-        state: state,
-        access_type: 'offline',
-        prompt: 'consent'
-      }).toString();
-
-      shell.openExternal(authUrl);
-    });
-
-    // Auto-timeout after 5 minutes if user abandons
-    setTimeout(() => {
-      if (this.server) {
-        this.cleanupServer();
-      }
-    }, 5 * 60 * 1000);
   }
 
-  // Fallback: Manually submit authorization code or callback URL
-  async handleManualCode(input) {
-    if (!input || typeof input !== 'string') {
-      return { success: false, error: 'No code or URL provided' };
-    }
-
-    let code = input.trim();
-    if (code.includes('code=')) {
-      const match = code.match(/code=([^&]+)/);
-      if (match) code = decodeURIComponent(match[1]);
-    }
-
-    if (!code) {
-      return { success: false, error: 'Could not extract authorization code from input' };
-    }
-
-    const verifier = (this.pendingAuth && this.pendingAuth.verifier) || null;
-    const redirectUri = (this.pendingAuth && this.pendingAuth.redirectUri) || 'http://localhost:51121/oauth-callback';
-
-    try {
-      const payload = {
-        client_id: CLIENT_ID,
-        code,
-        redirect_uri: redirectUri,
-        grant_type: 'authorization_code'
-      };
-      if (verifier) {
-        payload.code_verifier = verifier;
-      }
-
-      const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams(payload).toString()
-      });
-
-      if (!tokenRes.ok) {
-        const err = await tokenRes.text().catch(() => '');
-        console.error('[AntigravityProvider] Manual code exchange failed:', err);
-        return { success: false, error: err };
-      }
-
-      const tokenData = await tokenRes.json();
-      secureStore.saveSession('antigravity', {
-        tokens: tokenData,
-        connectedAt: new Date().toISOString()
-      });
-      secureStore.setProviderLoggedIn('antigravity', true);
-
-      if (tokenData && tokenData.access_token) {
-        const remoteResult = await this.fetchRemoteQuota(tokenData.access_token);
-        if (remoteResult && !remoteResult.error) {
-          this.cachedUsage = {
-            percentUsed: remoteResult.percentUsed,
-            windowPercent: remoteResult.windowPercent,
-            weeklyPercent: remoteResult.weeklyPercent,
-            windowResetInText: remoteResult.windowResetInText,
-            weeklyResetInText: remoteResult.weeklyResetInText,
-            resetInText: remoteResult.resetInText,
-            detail: `${remoteResult.modelName} Active (Google Cloud)`
-          };
-          secureStore.saveSession('antigravity', {
-            tokens: tokenData,
-            connectedAt: new Date().toISOString(),
-            lastUsage: this.cachedUsage
-          });
-        }
-      }
-
-      this.cleanupServer();
-      return { success: true };
-    } catch (err) {
-      return { success: false, error: err.message };
-    }
-  }
-
-  cleanupServer() {
-    if (this.server) {
-      try { this.server.close(); } catch (e) {}
-      this.server = null;
-    }
+  // Remember a fresh reading so it can still be shown (as stale) while Antigravity is closed
+  saveFresh(quota, source) {
+    this.cachedUsage = {
+      percentUsed: quota.percentUsed,
+      windowPercent: quota.windowPercent,
+      weeklyPercent: quota.weeklyPercent,
+      windowResetInText: quota.windowResetInText,
+      weeklyResetInText: quota.weeklyResetInText,
+      resetInText: quota.resetInText,
+      windowResetsAt: quota.windowResetsAt || null,
+      detail: `${quota.modelName} Active (${source})`
+    };
+    const now = new Date().toISOString();
+    secureStore.saveSession('antigravity', {
+      ...(secureStore.getSession('antigravity') || {}),
+      lastUsage: this.cachedUsage,
+      lastUsageAt: now,
+      connectedAt: now
+    });
+    return this.toResult(this.cachedUsage, { stale: false, updatedAt: Date.now() });
   }
 
   // ==========================================
@@ -933,194 +664,57 @@ class AntigravityProvider {
   // ==========================================
   async fetchUsage() {
     try {
-      const savedSession = secureStore.getSession('antigravity') || {};
-      let tokens = savedSession.tokens || {};
-      let accessToken = tokens.access_token;
-      const refreshToken = tokens.refresh_token;
-
-      // 1. Check local credential files if no stored token
-      if (!accessToken) {
-        const localTokens = this.getLocalTokenCandidates();
-        for (const t of localTokens) {
-          if (typeof t === 'string') {
-            accessToken = t;
-            break;
-          } else if (t && t.refreshToken) {
-            tokens.refresh_token = t.refreshToken;
-          }
-        }
-      }
-
-      // Google rejected the saved sign-in and it couldn't be refreshed
-      let authFailed = false;
-
-      // 2. OpenUsage Remote API: Try cloudcode-pa with access token
-      if (accessToken) {
-        let remoteResult = await this.fetchRemoteQuota(accessToken);
-        if (remoteResult && remoteResult.error === 'unauthorized' && (refreshToken || tokens.refresh_token)) {
-          const freshToken = await this.refreshAccessToken(refreshToken || tokens.refresh_token);
-          if (freshToken) {
-            tokens.access_token = freshToken;
-            accessToken = freshToken;
-            secureStore.saveSession('antigravity', { ...savedSession, tokens });
-            remoteResult = await this.fetchRemoteQuota(freshToken);
-          }
-        }
-        authFailed = Boolean(remoteResult && remoteResult.error === 'unauthorized' && savedSession.tokens);
-
-        if (remoteResult && !remoteResult.error) {
-          secureStore.setProviderLoggedIn('antigravity', true);
-          this.cachedUsage = {
-            percentUsed: remoteResult.percentUsed,
-            windowPercent: remoteResult.windowPercent,
-            weeklyPercent: remoteResult.weeklyPercent,
-            windowResetInText: remoteResult.windowResetInText,
-            weeklyResetInText: remoteResult.weeklyResetInText,
-            resetInText: remoteResult.resetInText,
-            detail: `${remoteResult.modelName} Active (Google Cloud)`
-          };
-
-          secureStore.saveSession('antigravity', {
-            ...(secureStore.getSession('antigravity') || {}),
-            lastUsage: this.cachedUsage,
-            lastUsageAt: new Date().toISOString(),
-            connectedAt: new Date().toISOString()
-          });
-
-          const status = remoteResult.percentUsed >= 90 ? 'critical' : remoteResult.percentUsed >= 70 ? 'warning' : 'ok';
-          return {
-            provider: 'antigravity',
-            name: 'Antigravity',
-            loggedIn: true,
-            percentUsed: remoteResult.percentUsed,
-            windowPercent: remoteResult.windowPercent,
-            weeklyPercent: remoteResult.weeklyPercent,
-            windowResetInText: remoteResult.windowResetInText,
-            weeklyResetInText: remoteResult.weeklyResetInText,
-            resetInText: remoteResult.resetInText,
-            status,
-            detail: this.cachedUsage.detail,
-            hasData: true, stale: false, updatedAt: Date.now(), needsReauth: false
-          };
-        }
-      }
-
-      // 3. Fallback: Query live local Language Server / Daemon
+      // 1. Running Antigravity app / agy hub on this machine
       try {
-        const liveQuota = await this.queryLiveUsage();
-        if (liveQuota) {
-          secureStore.setProviderLoggedIn('antigravity', true);
-          const detail = `${liveQuota.modelName} Active (Local)`;
-          this.cachedUsage = {
-            percentUsed: liveQuota.percentUsed,
-            windowPercent: liveQuota.windowPercent,
-            weeklyPercent: liveQuota.weeklyPercent,
-            windowResetInText: liveQuota.windowResetInText,
-            weeklyResetInText: liveQuota.weeklyResetInText,
-            resetInText: liveQuota.resetInText,
-            detail
-          };
-
-          secureStore.saveSession('antigravity', {
-            ...(secureStore.getSession('antigravity') || {}),
-            lastUsage: this.cachedUsage,
-            lastUsageAt: new Date().toISOString(),
-            connectedAt: new Date().toISOString()
-          });
-
-          const status = liveQuota.percentUsed >= 90 ? 'critical' : liveQuota.percentUsed >= 70 ? 'warning' : 'ok';
-          return {
-            provider: 'antigravity',
-            name: 'Antigravity',
-            loggedIn: true,
-            percentUsed: liveQuota.percentUsed,
-            windowPercent: liveQuota.windowPercent,
-            weeklyPercent: liveQuota.weeklyPercent,
-            windowResetInText: liveQuota.windowResetInText,
-            weeklyResetInText: liveQuota.weeklyResetInText,
-            resetInText: liveQuota.resetInText,
-            status,
-            detail,
-            hasData: true, stale: false, updatedAt: Date.now(), needsReauth: false
-          };
-        }
+        const live = await this.queryLiveUsage();
+        if (live) return this.saveFresh(live, 'Local');
       } catch (err) {
         console.warn('[AntigravityProvider] Live usage notice:', err.message);
       }
 
-      // 4. Cached usage from store if available
-      if (savedSession.lastUsage) {
-        const u = savedSession.lastUsage;
-        return {
-          provider: 'antigravity',
-          name: 'Antigravity',
-          loggedIn: true,
-          percentUsed: u.percentUsed || 0,
-          windowPercent: u.windowPercent !== undefined ? u.windowPercent : (u.percentUsed || 0),
-          weeklyPercent: u.weeklyPercent || 0,
-          windowResetInText: u.windowResetInText,
-          weeklyResetInText: u.weeklyResetInText,
-          resetInText: u.resetInText || 'Active',
-          status: (u.percentUsed >= 90) ? 'critical' : (u.percentUsed >= 70) ? 'warning' : 'ok',
-          detail: u.detail || 'Antigravity Connected',
-          hasData: true,
-          stale: true, // last known numbers; Antigravity couldn't be reached
-          updatedAt: savedSession.lastUsageAt ? Date.parse(savedSession.lastUsageAt) : null,
-          needsReauth: authFailed
-        };
+      // 2. Cloud Code API, if a local credential file holds an access token
+      const accessToken = this.getLocalTokenCandidates().find(t => typeof t === 'string');
+      if (accessToken) {
+        const remote = await this.fetchRemoteQuota(accessToken);
+        if (remote && !remote.error) return this.saveFresh(remote, 'Google Cloud');
       }
 
-      // Signed in before, but the sign-in expired and there's nothing cached
-      if (authFailed) {
-        return {
-          provider: 'antigravity',
-          name: 'Antigravity',
-          loggedIn: true,
-          percentUsed: 0,
-          windowPercent: 0,
-          weeklyPercent: 0,
-          resetInText: 'Sign-in expired',
-          status: 'ok',
-          detail: 'Sign in again to keep tracking Antigravity',
-          hasData: false, stale: true, updatedAt: null, needsReauth: true
-        };
+      // 3. Antigravity isn't running: last known numbers
+      const saved = secureStore.getSession('antigravity') || {};
+      if (saved.lastUsage) {
+        return this.toResult(saved.lastUsage, {
+          stale: true,
+          updatedAt: saved.lastUsageAt ? Date.parse(saved.lastUsageAt) : null
+        });
       }
 
-      // 5. Not connected
+      // 4. Never seen Antigravity running
       secureStore.setProviderLoggedIn('antigravity', false);
-      return {
-        provider: 'antigravity',
-        name: 'Antigravity',
-        loggedIn: false,
-        percentUsed: 0,
-        windowPercent: 0,
-        weeklyPercent: 0,
-        resetInText: 'Not Connected',
-        status: 'disconnected',
-        detail: 'Sign in with Google to track Antigravity quotas'
-      };
-
+      return this.notConnected('Open Antigravity to start tracking its quotas');
     } catch (err) {
       console.error('[AntigravityProvider] Fetch error:', err.message);
-      return {
-        provider: 'antigravity',
-        name: 'Antigravity',
-        loggedIn: false,
-        percentUsed: 0,
-        windowPercent: 0,
-        weeklyPercent: 0,
-        resetInText: 'Not Connected',
-        status: 'disconnected',
-        detail: 'Could not connect to Antigravity'
-      };
+      return this.notConnected('Could not read Antigravity usage');
     }
+  }
+
+  notConnected(detail) {
+    return {
+      provider: 'antigravity',
+      name: 'Antigravity',
+      loggedIn: false,
+      percentUsed: 0,
+      windowPercent: 0,
+      weeklyPercent: 0,
+      resetInText: 'Not Running',
+      status: 'disconnected',
+      detail
+    };
   }
 
   async logout() {
     secureStore.clearSession('antigravity');
     this.activeServer = null;
     this.cachedUsage = null;
-    this.cleanupServer();
   }
 }
 
